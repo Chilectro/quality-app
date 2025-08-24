@@ -1,0 +1,39 @@
+# === Python / FastAPI ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+.venv/
+env/
+venv/
+dist/
+build/
+
+# === Node / Vite ===
+node_modules/
+dist/
+*.log
+pnpm-lock.yaml
+yarn.lock
+npm-debug.log*
+
+# === IDE / SO ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# === Entornos / secretos ===
+**/.env
+**/.env.local
+**/.env.production
+**/.env.development
+
+# === Datos grandes opcionales (ajusta a tu gusto) ===
+uploads/
+data/
+*.xlsx
+*.xls
+*.csv
+!samples/**  # <-- si quieres dejar samples controlados
