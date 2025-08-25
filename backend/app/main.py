@@ -13,7 +13,10 @@ app = FastAPI(title="Quality Backend", version="0.1.0")
 # CORS para el frontend local (cuando lo montemos)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "https://quality-app.pages.dev",
+        "http://localhost:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
