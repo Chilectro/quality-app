@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import api from "../lib/api";
 
 type UpState = {
@@ -18,7 +18,7 @@ export default function Uploads() {
   async function upload(
     path: "/admin/upload/apsa" | "/admin/upload/aconex",
     file: File,
-    setState: (s: UpState) => void
+    setState: Dispatch<SetStateAction<UpState>>
   ) {
     const fd = new FormData();
     fd.append("file", file);
