@@ -15,6 +15,7 @@ type Row = {
   tag: string;
   subsistema: string;
   aconex?: string;
+  status: string;
 };
 
 type ListResponse = {
@@ -175,23 +176,38 @@ export default function LogProtocolos() {
               <th className="text-left px-3 py-2">DESCRIPCIÓN</th>
               <th className="text-left px-3 py-2">TAG</th>
               <th className="text-left px-3 py-2">SUBSISTEMA</th>
-              <th className="text-left px-3 py-2">Aconex</th>
+              <th className="text-left px-3 py-2">ACONEX</th>
+              <th className="text-left px-3 py-2">STATUS</th>
             </tr>
           </thead>
           <tbody>
             {!rows.length ? (
-              <tr><td className="px-3 py-4 text-gray-500" colSpan={5}>Sin datos</td></tr>
-            ) : rows.map((r, i) => (
-              <tr key={i} className="odd:bg-white even:bg-gray-50">
-                <td className="px-3 py-2">{r.document_no}</td>
-                <td className="px-3 py-2">{r.rev}</td>
-                <td className="px-3 py-2">{r.descripcion}</td>
-                <td className="px-3 py-2">{r.tag}</td>
-                <td className="px-3 py-2">{r.subsistema}</td>
-                <td className="px-3 py-2">{r.aconex || ""}</td>
-              </tr>
-            ))}
+              <tr><td className="px-3 py-4 text-gray-500" colSpan={6}>Sin datos</td></tr>
+            ) : rows.map((r, i) => {
+      const isCerrado = (r.status || "").toUpperCase() === "CERRADO";
+      return (
+        <tr key={i} className="odd:bg-white even:bg-gray-50">
+          <td className="px-3 py-2">{r.document_no}</td>
+          <td className="px-3 py-2">{r.rev}</td>
+          <td className="px-3 py-2">{r.descripcion}</td>
+          <td className="px-3 py-2">{r.tag}</td>
+          <td className="px-3 py-2">{r.subsistema}</td>
+          <td className="px-3 py-2">{r.aconex || ""}</td>
+          <td className="px-3 py-2">
+            <span
+              className={`inline-block w-2.5 h-2.5 rounded-full align-middle ${
+                isCerrado ? "bg-green-500" : "bg-red-500"
+              }`}
+              title={r.status}
+            />
+            <span className="ml-2 align-middle">{r.status}</span>
+          </td>
+        </tr>
+      );
+    })
+  )}
           </tbody>
+           
         </table>
       </div>
 
