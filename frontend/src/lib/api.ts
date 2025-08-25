@@ -2,7 +2,15 @@ import axios from "axios";
 import type { InternalAxiosRequestConfig } from "axios";
 import { useAuthStore } from "../store/auth";
 
-const BASE = (import.meta.env.VITE_API_URL as string) ?? "http://127.0.0.1:8000";
+const PROD = "https://quality-app-ufxj.onrender.com";
+const DEV  = "http://127.0.0.1:8000";
+
+const V = import.meta.env.VITE_API_URL as string | undefined;
+
+const BASE =
+  V && V.trim()
+    ? V.replace(/\/+$/, "") // quita la barra final si la pusiste
+    : (window.location.hostname.includes("onrender.com") ? PROD : DEV);
 
 const api = axios.create({
   baseURL: BASE,
