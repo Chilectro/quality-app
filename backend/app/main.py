@@ -1527,6 +1527,7 @@ def apsa_list(
         ApsaProtocol.tag,
         ApsaProtocol.subsistema,
         aconex_exists.label("aconex_cargado"),
+        ApsaProtocol.status_bim360,
     ).where(ApsaProtocol.load_id == apsa_id)
 
     if subsistema:
@@ -1568,6 +1569,7 @@ def apsa_list(
             "tag": (str(tag) if tag is not None else "-").strip() or "-",
             "subsistema": (subs or "").strip(),
             "aconex": "Cargado" if bool(cargado) else "",   # NUEVA COLUMNA
+            "status": status_norm,
         })
 
     return {"rows": rows, "total": int(total), "page": page, "page_size": page_size}
@@ -1588,6 +1590,7 @@ def export_apsa_csv(
 
     aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
 
+    # Normalizador para comparar códigos
     def N(expr):
         return func.replace(
             func.replace(
@@ -1600,6 +1603,7 @@ def export_apsa_csv(
             "_", ""
         )
 
+    # exists correlacionado contra Aconex (o FALSE si no hay carga Aconex)
     if aconex_id:
         aconex_exists = select(1).where(
             AconexDoc.load_id == aconex_id,
@@ -1609,6 +1613,7 @@ def export_apsa_csv(
         from sqlalchemy import false
         aconex_exists = false()
 
+    # Selecciona también el status
     qsel = (
         select(
             ApsaProtocol.codigo_cmdic,
@@ -1616,9 +1621,12 @@ def export_apsa_csv(
             ApsaProtocol.tag,
             ApsaProtocol.subsistema,
             aconex_exists.label("aconex_cargado"),
+            ApsaProtocol.status_bim360.label("status"),   # <- aquí va el status
         )
         .where(ApsaProtocol.load_id == apsa_id)
     )
+
+    # Filtros
     if subsistema:
         qsel = qsel.where(ApsaProtocol.subsistema == subsistema)
     if disciplina:
@@ -1637,11 +1645,22 @@ def export_apsa_csv(
         qsel.order_by(ApsaProtocol.subsistema.asc(), ApsaProtocol.codigo_cmdic.asc())
     ).all()
 
+    # CSV ; con BOM para Excel
     buf = StringIO()
     w = csv.writer(buf, delimiter=";")
-    # Agregamos columna Aconex
-    w.writerow(["NÚMERO DE DOCUMENTO ACONEX", "REV.", "DESCRIPCIÓN", "TAG", "SUBSISTEMA", "Aconex"])
-    for cod, desc, tag, subs, cargado in rows:
+    w.writerow([
+        "NÚMERO DE DOCUMENTO ACONEX",
+        "REV.",
+        "DESCRIPCIÓN",
+        "TAG",
+        "SUBSISTEMA",
+        "Aconex",
+        "Status"
+    ])
+
+    # OJO: ahora desempacamos 6 columnas (incluye status)
+    for cod, desc, tag, subs, cargado, status in rows:
+        status_str = (status or "").strip().upper()  # "ABIERTO" / "CERRADO" / ""
         w.writerow([
             (cod or "").strip(),
             "0",
@@ -1649,9 +1668,12 @@ def export_apsa_csv(
             (str(tag) if tag is not None else "-").strip() or "-",
             (subs or "").strip(),
             "Cargado" if bool(cargado) else "",
+            status_str,  # escribe el status en la última columna
         ])
 
-    csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")  # BOM para Excel
+    csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")
+
+    # Nombre de archivo con filtros
     fname_parts = []
     if disciplina:  fname_parts.append(f"disc-{disciplina}")
     if subsistema:  fname_parts.append(f"sub-{subsistema.replace('/', '_')}")
@@ -1659,7 +1681,5 @@ def export_apsa_csv(
 
     from fastapi.responses import Response
     fname = "log_protocolos" + (f"_{'_'.join(fname_parts)}" if fname_parts else "") + ".csv"
-    headers = {
-        "Content-Disposition": f'attachment; filename="{fname}"'
-    }
+    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
     return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
