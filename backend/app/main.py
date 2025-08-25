@@ -83,6 +83,7 @@ import csv
 from sqlalchemy import literal_column
 import logging
 from sqlalchemy.exc import DataError
+from sqlalchemy import inspect
 logger = logging.getLogger(__name__)
 
 def set_refresh_cookie(response: Response, token: str):
@@ -505,6 +506,37 @@ def auth_logout(
     clear_refresh_cookie(response)
     return {"ok": True}
 
+def _norm(x, *, empty_as_none=True):
+    """Convierte NaN/None/'nan' en None o '' y hace strip."""
+    if x is None:
+        return None if empty_as_none else ""
+    s = str(x).strip()
+    if s == "" or s.lower() in ("nan", "none", "null"):
+        return None if empty_as_none else ""
+    return s
+
+def _clip(s: str | None, n: int | None) -> str | None:
+    if s is None or n is None:
+        return s
+    return s if len(s) <= n else s[:n]
+
+def _model_col_len(model, col: str) -> int | None:
+    try:
+        return getattr(model.__table__.columns[col].type, "length", None)
+    except Exception:
+        return None
+
+def _db_col_len(db: Session, table: str, col: str) -> int | None:
+    try:
+        insp = inspect(db.get_bind())
+        for c in insp.get_columns(table):
+            if c["name"] == col:
+                L = getattr(c["type"], "length", None)
+                return int(L) if L else None
+    except Exception as e:
+        logger.warning("No pude inspeccionar longitud de %s.%s: %s", table, col, e)
+    return None
+
 @app.post("/admin/upload/apsa")
 def upload_apsa(
     file: UploadFile = File(...),
@@ -512,7 +544,6 @@ def upload_apsa(
     db: Session = Depends(get_db),
     decoded=Depends(require_roles("Admin"))
 ):
-    # Si pides hard=true, vaciamos APSA
     if hard:
         _purge_source_all(db, SourceEnum.APSA)
 
@@ -533,7 +564,7 @@ def upload_apsa(
     # Normalizar nombres de columnas
     df = normalize_cols(df)
 
-    # ---- Aliases robustos (acepta 'Z DISCIPLINA', 'N SUBSISTEMA', etc.) ----
+    # ---- Aliases robustos ----
     def find_col(df_cols, *candidates_contains):
         for c in df_cols:
             U = str(c).upper().strip()
@@ -560,22 +591,17 @@ def upload_apsa(
     if missing:
         raise HTTPException(status_code=400, detail=f"Columnas faltantes en APSA: {missing}")
 
-    # ---------- Helpers de normalización/recorte ----------
-    def _norm(x, *, empty_as_none=True):
-        """Convierte NaN/None/'nan' en None o '' y hace strip."""
-        if x is None:
-            return None if empty_as_none else ""
-        s = str(x).strip()
-        if s == "" or s.lower() in ("nan", "none", "null"):
-            return None if empty_as_none else ""
-        return s
+    # ====== CALCULAR LÍMITE REAL DE 'tag' ======
+    # 1) primero el declarado en el modelo
+    tag_limit = _model_col_len(ApsaProtocol, "tag")
+    # 2) si no está, tratamos de leerlo de la DB real
+    if not tag_limit:
+        tag_limit = _db_col_len(db, "apsa_protocols", "tag")
+    # 3) fallback prudente si nada funcionó
+    if not tag_limit:
+        tag_limit = 64  # prudente, evita 1406 aunque recorte más
 
-    def _clip(s: str | None, n: int) -> str | None:
-        if s is None:
-            return None
-        return s if len(s) <= n else s[:n]
-
-    MAX_TAG = 191  # seguro con utf8mb4 si esa columna estuviera indexada
+    logger.info("Límite detectado para apsa_protocols.tag = %s", tag_limit)
 
     # Crear registro de carga
     load = _store_load(db, SourceEnum.APSA, file.filename, filehash)
@@ -599,12 +625,14 @@ def upload_apsa(
 
         codigo = _norm(r.get(COL_CODIGO)) or ""
         desc   = _norm(r.get(COL_DESC)) or ""
-        tag    = _norm(r.get(COL_TAG))  # puede quedar None
-        if tag:
-            new_tag = _clip(tag, MAX_TAG)
-            if new_tag != tag:
+
+        # ---- TAG: normalizar + recortar al límite real ----
+        tag_val = _norm(r.get(COL_TAG))
+        if tag_val:
+            cut = _clip(tag_val, tag_limit)
+            if cut != tag_val:
                 clipped += 1
-            tag = new_tag
+            tag_val = cut  # puede quedar None si venía vacío
 
         status = (_norm(r.get(COL_STATUS)) or "NAN").upper()
 
@@ -612,9 +640,9 @@ def upload_apsa(
             load_id=load.id,
             codigo_cmdic=codigo,
             descripcion=desc,
-            tag=tag,                      # None si venía vacío/NaN
-            subsistema=subs_str,          # "" si vacío
-            disciplina=disc_code or "",   # "" si no pudo derivarse
+            tag=tag_val,
+            subsistema=subs_str,
+            disciplina=disc_code or "",
             status_bim360=status,
         ))
 
@@ -626,17 +654,15 @@ def upload_apsa(
         db.commit()
     except DataError as e:
         db.rollback()
-        logger.exception("Error guardando APSA")
-        # Devuelve un mensaje claro al frontend:
+        logger.exception("Error guardando APSA (tag_limit=%s)", tag_limit)
         raise HTTPException(
             status_code=400,
             detail=f"Error de datos al guardar APSA: {str(e.orig) if hasattr(e, 'orig') else str(e)}"
         )
 
     if clipped:
-        logger.warning("APSA: %s tags fueron recortados a %s caracteres", clipped, MAX_TAG)
+        logger.warning("APSA: %s tags fueron recortados a %s caracteres", clipped, tag_limit)
 
-    # Mantener solo las 2 últimas cargas APSA
     _purge_old_loads(db, SourceEnum.APSA, keep=2)
 
     return {
@@ -644,7 +670,8 @@ def upload_apsa(
         "rows_inserted": len(rows),
         "sheet": sheet,
         "header_row": int(header_row),
-        "tags_recortados": clipped
+        "tags_recortados": clipped,
+        "tag_limit": tag_limit,
     }
 
 @app.post("/admin/upload/aconex")
