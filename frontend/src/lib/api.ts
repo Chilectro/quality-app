@@ -2,15 +2,31 @@ import axios from "axios";
 import type { InternalAxiosRequestConfig } from "axios";
 import { useAuthStore } from "../store/auth";
 
-const PROD = "https://quality-app-ufxj.onrender.com";
-const DEV  = "http://127.0.0.1:8000";
+// BACKENDS
+const RENDER_BACKEND = "https://quality-app-ufxj.onrender.com";
+const LOCAL_BACKEND  = "http://127.0.0.1:8000";
 
-const V = import.meta.env.VITE_API_URL as string | undefined;
+function pickBase(): string {
+  // 1) Variables de entorno (ambos nombres soportados)
+  const env =
+    (import.meta as any)?.env?.VITE_API_URL ??
+    (import.meta as any)?.env?.VITE_API_BASE_URL ??
+    "";
 
-const BASE =
-  V && V.trim()
-    ? V.replace(/\/+$/, "") // quita la barra final si la pusiste
-    : (window.location.hostname.includes("onrender.com") ? PROD : DEV);
+  const fromEnv = String(env || "").trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+
+  // 2) Detección por hostname en runtime (por si falla la env)
+  const host = (typeof window !== "undefined" && window.location.hostname) || "";
+  if (host.includes("onrender.com") || host.includes("pages.dev")) {
+    return RENDER_BACKEND;
+  }
+
+  // 3) Desarrollo local
+  return LOCAL_BACKEND;
+}
+
+export const BASE = pickBase();
 
 const api = axios.create({
   baseURL: BASE,
@@ -36,7 +52,8 @@ let refreshing: Promise<string | null> | null = null;
 
 async function doRefresh(): Promise<string | null> {
   try {
-    const res = await axios.post(`${BASE}/auth/refresh`, {}, { withCredentials: true });
+    // Usa SIEMPRE la misma instancia para respetar baseURL y cookies
+    const res = await api.post("/auth/refresh", {});
     const token = res.data?.access_token as string;
     useAuthStore.getState().setAccessToken(token, {
       email: res.data?.email,
@@ -64,7 +81,7 @@ api.interceptors.response.use(
         if (typeof h.set === "function") {
           h.set("Authorization", `Bearer ${newTok}`);
         } else {
-          h["Authorization"] = `Bearer ${newTok}`;
+          h["Authorization"] = `Bearer ${newTok}`);
         }
         original.headers = h;
         return api(original);
