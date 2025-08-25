@@ -1517,9 +1517,9 @@ def apsa_list(
             N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic)
         ).exists()
     else:
-        aconex_exists = false()
+        aconex_exists = false()  # <-- importante
 
-    # base query
+    # base query (7 columnas)
     base = select(
         ApsaProtocol.id,
         ApsaProtocol.codigo_cmdic,
@@ -1549,9 +1549,9 @@ def apsa_list(
         select(func.count()).select_from(base.subquery())
     ).scalar() or 0
 
-    # pagina
+    # paginación
     page = max(1, int(page))
-    page_size = min(500, max(1, int(page_size)))  # hard cap
+    page_size = min(500, max(1, int(page_size)))
     offset = (page - 1) * page_size
 
     rows_db = db.execute(
@@ -1561,15 +1561,17 @@ def apsa_list(
     ).all()
 
     rows = []
-    for _, cod, desc, tag, subs, cargado in rows_db:
+    #       ▼ añade 'status' al desempacado
+    for _, cod, desc, tag, subs, cargado, status in rows_db:
+        status_norm = (status or "").strip().upper()
         rows.append({
-            "document_no": (cod or "").strip(),     # NÚMERO DE DOCUMENTO ACONEX
-            "rev": "0",                              # REV. fijo
-            "descripcion": (desc or "").strip(),     # DESCRIPCIÓN
+            "document_no": (cod or "").strip(),                      # NÚMERO DE DOCUMENTO ACONEX
+            "rev": "0",                                              # REV. fijo
+            "descripcion": (desc or "").strip(),                     # DESCRIPCIÓN
             "tag": (str(tag) if tag is not None else "-").strip() or "-",
             "subsistema": (subs or "").strip(),
-            "aconex": "Cargado" if bool(cargado) else "",   # NUEVA COLUMNA
-            "status": status_norm,
+            "aconex": "Cargado" if bool(cargado) else "",            # NUEVA COLUMNA
+            "status": status_norm,                                   # NUEVA COLUMNA
         })
 
     return {"rows": rows, "total": int(total), "page": page, "page_size": page_size}
