@@ -1496,13 +1496,37 @@ def apsa_list(
     if not apsa_id:
         return {"rows": [], "total": 0, "page": page, "page_size": page_size}
 
+    aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
+
+    # Normalizador SQL igual al de metrics_cards
+    def N(expr):
+        return func.replace(
+            func.replace(
+                func.replace(
+                    func.upper(func.trim(expr)),
+                    " ", ""
+                ),
+                "-", ""
+            ),
+            "_", ""
+        )
+
+    if aconex_id:
+        aconex_exists = select(1).where(
+            AconexDoc.load_id == aconex_id,
+            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic)
+        ).exists()
+    else:
+        aconex_exists = false()
+
     # base query
     base = select(
         ApsaProtocol.id,
         ApsaProtocol.codigo_cmdic,
         ApsaProtocol.descripcion,
         ApsaProtocol.tag,
-        ApsaProtocol.subsistema
+        ApsaProtocol.subsistema,
+        aconex_exists.label("aconex_cargado"),
     ).where(ApsaProtocol.load_id == apsa_id)
 
     if subsistema:
@@ -1536,13 +1560,14 @@ def apsa_list(
     ).all()
 
     rows = []
-    for _, cod, desc, tag, subs in rows_db:
+    for _, cod, desc, tag, subs, cargado in rows_db:
         rows.append({
             "document_no": (cod or "").strip(),     # NÚMERO DE DOCUMENTO ACONEX
             "rev": "0",                              # REV. fijo
             "descripcion": (desc or "").strip(),     # DESCRIPCIÓN
-            "tag": (str(tag) if tag is not None else "-").strip() or "-",  # TAG
-            "subsistema": (subs or "").strip(),      # SUBSISTEMA
+            "tag": (str(tag) if tag is not None else "-").strip() or "-",
+            "subsistema": (subs or "").strip(),
+            "aconex": "Cargado" if bool(cargado) else "",   # NUEVA COLUMNA
         })
 
     return {"rows": rows, "total": int(total), "page": page, "page_size": page_size}
@@ -1561,12 +1586,36 @@ def export_apsa_csv(
     if not apsa_id:
         raise HTTPException(status_code=400, detail="No hay carga APSA disponible")
 
+    aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
+
+    def N(expr):
+        return func.replace(
+            func.replace(
+                func.replace(
+                    func.upper(func.trim(expr)),
+                    " ", ""
+                ),
+                "-", ""
+            ),
+            "_", ""
+        )
+
+    if aconex_id:
+        aconex_exists = select(1).where(
+            AconexDoc.load_id == aconex_id,
+            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic)
+        ).exists()
+    else:
+        from sqlalchemy import false
+        aconex_exists = false()
+
     qsel = (
         select(
             ApsaProtocol.codigo_cmdic,
             ApsaProtocol.descripcion,
             ApsaProtocol.tag,
-            ApsaProtocol.subsistema
+            ApsaProtocol.subsistema,
+            aconex_exists.label("aconex_cargado"),
         )
         .where(ApsaProtocol.load_id == apsa_id)
     )
@@ -1584,18 +1633,22 @@ def export_apsa_csv(
             )
         )
 
-    rows = db.execute(qsel.order_by(ApsaProtocol.subsistema.asc(), ApsaProtocol.codigo_cmdic.asc())).all()
+    rows = db.execute(
+        qsel.order_by(ApsaProtocol.subsistema.asc(), ApsaProtocol.codigo_cmdic.asc())
+    ).all()
 
     buf = StringIO()
     w = csv.writer(buf, delimiter=";")
-    w.writerow(["NÚMERO DE DOCUMENTO ACONEX", "REV.", "DESCRIPCIÓN", "TAG", "SUBSISTEMA"])
-    for cod, desc, tag, subs in rows:
+    # Agregamos columna Aconex
+    w.writerow(["NÚMERO DE DOCUMENTO ACONEX", "REV.", "DESCRIPCIÓN", "TAG", "SUBSISTEMA", "Aconex"])
+    for cod, desc, tag, subs, cargado in rows:
         w.writerow([
             (cod or "").strip(),
             "0",
             (desc or "").strip(),
             (str(tag) if tag is not None else "-").strip() or "-",
             (subs or "").strip(),
+            "Cargado" if bool(cargado) else "",
         ])
 
     csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")  # BOM para Excel
@@ -1604,6 +1657,9 @@ def export_apsa_csv(
     if subsistema:  fname_parts.append(f"sub-{subsistema.replace('/', '_')}")
     if q and q.strip(): fname_parts.append("q")
 
-    fname = "log_protocolos.csv" if not fname_parts else f"log_protocolos_{'_'.join(fname_parts)}.csv"
-    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
-    return StreamingResponse(iter([csv_bytes]), media_type="text/csv; charset=utf-8", headers=headers)
+    from fastapi.responses import Response
+    fname = "log_protocolos" + (f"_{'_'.join(fname_parts)}" if fname_parts else "") + ".csv"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{fname}"'
+    }
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
