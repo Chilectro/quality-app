@@ -14,6 +14,7 @@ type Row = {
   descripcion: string;
   tag: string;
   subsistema: string;
+  aconex?: string;
 };
 
 type ListResponse = {
@@ -174,6 +175,7 @@ export default function LogProtocolos() {
               <th className="text-left px-3 py-2">DESCRIPCIÓN</th>
               <th className="text-left px-3 py-2">TAG</th>
               <th className="text-left px-3 py-2">SUBSISTEMA</th>
+              <th className="text-left px-3 py-2">Aconex</th>
             </tr>
           </thead>
           <tbody>
@@ -186,6 +188,7 @@ export default function LogProtocolos() {
                 <td className="px-3 py-2">{r.descripcion}</td>
                 <td className="px-3 py-2">{r.tag}</td>
                 <td className="px-3 py-2">{r.subsistema}</td>
+                <td className="px-3 py-2">{r.aconex || ""}</td>
               </tr>
             ))}
           </tbody>
