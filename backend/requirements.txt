@@ -19,3 +19,4 @@ numpy==2.1.1
 pymysql==1.1.1
 httpx==0.27.0
 alembic==1.13.2 
+cachetools==5.3.3
