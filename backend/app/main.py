@@ -81,6 +81,9 @@ from fastapi.responses import StreamingResponse
 from io import StringIO
 import csv
 from sqlalchemy import literal_column
+import logging
+from sqlalchemy.exc import DataError
+logger = logging.getLogger(__name__)
 
 def set_refresh_cookie(response: Response, token: str):
     s = get_settings()
@@ -512,6 +515,7 @@ def upload_apsa(
     # Si pides hard=true, vaciamos APSA
     if hard:
         _purge_source_all(db, SourceEnum.APSA)
+
     # Leer bytes y hash
     content = file.file.read()
     filehash = sha256_bytes(content)
@@ -556,41 +560,92 @@ def upload_apsa(
     if missing:
         raise HTTPException(status_code=400, detail=f"Columnas faltantes en APSA: {missing}")
 
+    # ---------- Helpers de normalización/recorte ----------
+    def _norm(x, *, empty_as_none=True):
+        """Convierte NaN/None/'nan' en None o '' y hace strip."""
+        if x is None:
+            return None if empty_as_none else ""
+        s = str(x).strip()
+        if s == "" or s.lower() in ("nan", "none", "null"):
+            return None if empty_as_none else ""
+        return s
+
+    def _clip(s: str | None, n: int) -> str | None:
+        if s is None:
+            return None
+        return s if len(s) <= n else s[:n]
+
+    MAX_TAG = 191  # seguro con utf8mb4 si esa columna estuviera indexada
+
     # Crear registro de carga
     load = _store_load(db, SourceEnum.APSA, file.filename, filehash)
 
     # Insertar filas normalizadas
     rows: list[ApsaProtocol] = []
+    clipped = 0
+
     for _, r in df.iterrows():
         # Subsistema limpio
         subs_raw = r.get(COL_SUBS, "")
-        subs_str = "" if pd.isna(subs_raw) else str(subs_raw).strip().upper()
+        subs_str = _norm(subs_raw, empty_as_none=False) or ""
+        subs_str = subs_str.upper()
         if subs_str in ("NAN", "NONE", "NULL"):
             subs_str = ""
 
-        # Disciplina: primero desde la celda; si no hay, derivar desde el subsistema (ej '5620-...' => '56')
-        disc_code = normalize_disc_code(r.get(COL_DISC, ""))
+        # Disciplina (de la celda o derivada del subsistema)
+        disc_code = normalize_disc_code(_norm(r.get(COL_DISC)) or "")
         if not disc_code or disc_code == "0":
             disc_code = discipline_from_subsystem(subs_str)
 
+        codigo = _norm(r.get(COL_CODIGO)) or ""
+        desc   = _norm(r.get(COL_DESC)) or ""
+        tag    = _norm(r.get(COL_TAG))  # puede quedar None
+        if tag:
+            new_tag = _clip(tag, MAX_TAG)
+            if new_tag != tag:
+                clipped += 1
+            tag = new_tag
+
+        status = (_norm(r.get(COL_STATUS)) or "NAN").upper()
+
         rows.append(ApsaProtocol(
             load_id=load.id,
-            codigo_cmdic=str(r.get(COL_CODIGO, "") or "").strip(),
-            descripcion=str(r.get(COL_DESC, "") or "").strip(),
-            tag=str(r.get(COL_TAG, "") or "").strip(),
-            subsistema=subs_str,
-            disciplina=disc_code,
-            status_bim360=str(r.get(COL_STATUS, "") or "").strip().upper(),
+            codigo_cmdic=codigo,
+            descripcion=desc,
+            tag=tag,                      # None si venía vacío/NaN
+            subsistema=subs_str,          # "" si vacío
+            disciplina=disc_code or "",   # "" si no pudo derivarse
+            status_bim360=status,
         ))
 
-    if rows:
+    if not rows:
+        return {"ok": True, "rows_inserted": 0, "sheet": sheet, "header_row": int(header_row)}
+
+    try:
         db.bulk_save_objects(rows)
         db.commit()
+    except DataError as e:
+        db.rollback()
+        logger.exception("Error guardando APSA")
+        # Devuelve un mensaje claro al frontend:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error de datos al guardar APSA: {str(e.orig) if hasattr(e, 'orig') else str(e)}"
+        )
+
+    if clipped:
+        logger.warning("APSA: %s tags fueron recortados a %s caracteres", clipped, MAX_TAG)
 
     # Mantener solo las 2 últimas cargas APSA
     _purge_old_loads(db, SourceEnum.APSA, keep=2)
 
-    return {"ok": True, "rows_inserted": len(rows), "sheet": sheet, "header_row": int(header_row)}
+    return {
+        "ok": True,
+        "rows_inserted": len(rows),
+        "sheet": sheet,
+        "header_row": int(header_row),
+        "tags_recortados": clipped
+    }
 
 @app.post("/admin/upload/aconex")
 def upload_aconex(
