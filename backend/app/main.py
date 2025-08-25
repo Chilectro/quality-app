@@ -11,16 +11,24 @@ from typing import Literal
 app = FastAPI(title="Quality Backend", version="0.1.0")
 
 # CORS para el frontend local (cuando lo montemos)
+ALLOWED_ORIGINS = [
+    # Render (frontend)
+    "https://quality-app-1.onrender.com",
+    # Cloudflare Pages (si ese es tu frontend)
+    "https://quality-app.pages.dev",
+    # Por si usas otra instancia Render o dominio similar
+    "https://quality-app-ufxj.onrender.com",
+    # Dev local
+    "http://localhost:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-    "https://quality-app-1.onrender.com",
-    "https://quality-app.pages.dev",
-    "http://localhost:5173",
-],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,         # lista explícita (recomendado en prod)
+    allow_credentials=True,                # usas cookies, así que debe ser True
+    allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+    allow_headers=["*"],                   # incluye Content-Type, Authorization, etc.
+    expose_headers=["Content-Disposition"] # por si descargas/descargas excel
 )
 
 @app.get("/health")
