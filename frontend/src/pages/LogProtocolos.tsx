@@ -14,8 +14,8 @@ type Row = {
   descripcion: string;
   tag: string;
   subsistema: string;
-  aconex?: string;
-  status: string;
+  aconex?: string;    // "Cargado" o ""
+  status: string;     // "ABIERTO" / "CERRADO" / ""
 };
 
 type ListResponse = {
@@ -56,7 +56,9 @@ export default function LogProtocolos() {
         setErr(e?.message || "Error cargando opciones");
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   async function fetchList(p = 1) {
@@ -118,43 +120,56 @@ export default function LogProtocolos() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
         <div>
           <label className="block text-sm text-gray-600 mb-1">Subsistema</label>
-          <select className="w-full border rounded-lg px-3 py-2"
-                  value={subsistema}
-                  onChange={(e) => setSubsistema(e.target.value)}>
+          <select
+            className="w-full border rounded-lg px-3 py-2"
+            value={subsistema}
+            onChange={(e) => setSubsistema(e.target.value)}
+          >
             <option value="">— Todos —</option>
             {opts.subsistemas.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>
+                {s}
+              </option>
             ))}
           </select>
         </div>
 
         <div>
           <label className="block text-sm text-gray-600 mb-1">Disciplina</label>
-          <select className="w-full border rounded-lg px-3 py-2"
-                  value={disciplina}
-                  onChange={(e) => setDisciplina(e.target.value)}>
+          <select
+            className="w-full border rounded-lg px-3 py-2"
+            value={disciplina}
+            onChange={(e) => setDisciplina(e.target.value)}
+          >
             <option value="">— Todas —</option>
             {opts.disciplinas.map((d) => (
-              <option key={d} value={d}>{d}</option>
+              <option key={d} value={d}>
+                {d}
+              </option>
             ))}
           </select>
         </div>
 
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Buscar (código / descripción / tag)</label>
-          <input className="w-full border rounded-lg px-3 py-2"
-                 placeholder="ej: 5620-S01 / VÁLVULA / PRC..."
-                 value={q}
-                 onChange={(e) => setQ(e.target.value)} />
+          <label className="block text-sm text-gray-600 mb-1">
+            Buscar (código / descripción / tag)
+          </label>
+          <input
+            className="w-full border rounded-lg px-3 py-2"
+            placeholder="ej: 5620-S01 / VÁLVULA / PRC..."
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
         </div>
 
         <div className="flex gap-2">
-          <button onClick={onBuscar}
-                  className="px-4 py-2 rounded-lg bg-black text-white">
+          <button onClick={onBuscar} className="px-4 py-2 rounded-lg bg-black text-white">
             {loading ? "Buscando..." : "Buscar"}
           </button>
-          <button onClick={onDescargar}
-                  className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50">
+          <button
+            onClick={onDescargar}
+            className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50"
+          >
             Descargar Excel
           </button>
         </div>
@@ -162,9 +177,15 @@ export default function LogProtocolos() {
 
       {/* Estado / errores */}
       <div className="text-sm text-gray-500">
-        {total ? <>Resultado: <b>{fmt(total)}</b> filas</> : null}
+        {total ? (
+          <>
+            Resultado: <b>{fmt(total)}</b> filas
+          </>
+        ) : null}
       </div>
-      {err ? <div className="p-3 rounded-lg bg-red-50 text-red-700 border border-red-200">{err}</div> : null}
+      {err ? (
+        <div className="p-3 rounded-lg bg-red-50 text-red-700 border border-red-200">{err}</div>
+      ) : null}
 
       {/* Tabla */}
       <div className="overflow-auto rounded-2xl border bg-white">
@@ -182,32 +203,37 @@ export default function LogProtocolos() {
           </thead>
           <tbody>
             {!rows.length ? (
-              <tr><td className="px-3 py-4 text-gray-500" colSpan={6}>Sin datos</td></tr>
-            ) : rows.map((r, i) => {
-      const isCerrado = (r.status || "").toUpperCase() === "CERRADO";
-      return (
-        <tr key={i} className="odd:bg-white even:bg-gray-50">
-          <td className="px-3 py-2">{r.document_no}</td>
-          <td className="px-3 py-2">{r.rev}</td>
-          <td className="px-3 py-2">{r.descripcion}</td>
-          <td className="px-3 py-2">{r.tag}</td>
-          <td className="px-3 py-2">{r.subsistema}</td>
-          <td className="px-3 py-2">{r.aconex || ""}</td>
-          <td className="px-3 py-2">
-            <span
-              className={`inline-block w-2.5 h-2.5 rounded-full align-middle ${
-                isCerrado ? "bg-green-500" : "bg-red-500"
-              }`}
-              title={r.status}
-            />
-            <span className="ml-2 align-middle">{r.status}</span>
-          </td>
-        </tr>
-      );
-    })
-  )}
+              <tr>
+                {/* ahora hay 7 columnas */}
+                <td className="px-3 py-4 text-gray-500" colSpan={7}>
+                  Sin datos
+                </td>
+              </tr>
+            ) : (
+              rows.map((r, i) => {
+                const isCerrado = (r.status || "").toUpperCase() === "CERRADO";
+                return (
+                  <tr key={i} className="odd:bg-white even:bg-gray-50">
+                    <td className="px-3 py-2">{r.document_no}</td>
+                    <td className="px-3 py-2">{r.rev}</td>
+                    <td className="px-3 py-2">{r.descripcion}</td>
+                    <td className="px-3 py-2">{r.tag}</td>
+                    <td className="px-3 py-2">{r.subsistema}</td>
+                    <td className="px-3 py-2">{r.aconex || ""}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-block w-2.5 h-2.5 rounded-full align-middle ${
+                          isCerrado ? "bg-green-500" : "bg-red-500"
+                        }`}
+                        title={r.status}
+                      />
+                      <span className="ml-2 align-middle">{r.status}</span>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
-           
         </table>
       </div>
 
@@ -220,23 +246,34 @@ export default function LogProtocolos() {
           <button
             disabled={!canPrev || loading}
             onClick={() => fetchList(page - 1)}
-            className={`px-3 py-2 rounded-lg border ${canPrev ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"}`}
+            className={`px-3 py-2 rounded-lg border ${
+              canPrev ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+            }`}
           >
             ← Anterior
           </button>
           <button
             disabled={!canNext || loading}
             onClick={() => fetchList(page + 1)}
-            className={`px-3 py-2 rounded-lg border ${canNext ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"}`}
+            className={`px-3 py-2 rounded-lg border ${
+              canNext ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+            }`}
           >
             Siguiente →
           </button>
           <select
             value={pageSize}
-            onChange={(e) => { setPageSize(Number(e.target.value)); fetchList(1); }}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              fetchList(1);
+            }}
             className="border rounded-lg px-2 py-2 text-sm"
           >
-            {[25, 50, 100, 200, 500].map((n) => <option key={n} value={n}>{n}/página</option>)}
+            {[25, 50, 100, 200, 500].map((n) => (
+              <option key={n} value={n}>
+                {n}/página
+              </option>
+            ))}
           </select>
         </div>
       </div>
