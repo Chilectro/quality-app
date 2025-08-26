@@ -8,6 +8,7 @@ class ApsaProtocol(Base):
     load_id = Column(Integer, ForeignKey("loads.id", ondelete="CASCADE"), nullable=False)
 
     codigo_cmdic = Column(String(120), index=True)   # Col E
+    tipo  = Column(Text)                              # Col G
     descripcion  = Column(Text)                      # Col I
     tag          = Column(String(120))               # Col W
     subsistema   = Column(String(60), index=True)    # Col N (ej 5620-S01-003)
