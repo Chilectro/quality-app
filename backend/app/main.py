@@ -1528,6 +1528,7 @@ def apsa_list(
         ApsaProtocol.id,
         ApsaProtocol.codigo_cmdic,
         ApsaProtocol.descripcion,
+        ApsaProtocol.tipo,
         ApsaProtocol.tag,
         ApsaProtocol.subsistema,
         aconex_exists.label("aconex_cargado"),
@@ -1544,6 +1545,7 @@ def apsa_list(
             or_(
                 ApsaProtocol.codigo_cmdic.ilike(like),
                 ApsaProtocol.descripcion.ilike(like),
+                ApsaProtocol.tipo.ilike(like), 
                 ApsaProtocol.tag.ilike(like),
             )
         )
@@ -1566,12 +1568,17 @@ def apsa_list(
 
     rows = []
     #       ▼ añade 'status' al desempacado
-    for _, cod, desc, tag, subs, cargado, status in rows_db:
+    for _, cod, desc, tipo, tag, subs, cargado, status in rows_db:
+        desc_s  = (desc or "").strip()
+        tipo_s  = (tipo or "").strip()
+        # concatenación: "TIPO - DESCRIPCIÓN", si falta uno usa el otro
+        desc_final = " - ".join([x for x in [tipo_s, desc_s] if x])
+        
         status_norm = (status or "").strip().upper()
         rows.append({
             "document_no": (cod or "").strip(),                      # NÚMERO DE DOCUMENTO ACONEX
             "rev": "0",                                              # REV. fijo
-            "descripcion": (desc or "").strip(),                     # DESCRIPCIÓN
+            "descripcion": desc_final,                     # DESCRIPCIÓN
             "tag": (str(tag) if tag is not None else "-").strip() or "-",
             "subsistema": (subs or "").strip(),
             "aconex": "Cargado" if bool(cargado) else "",            # NUEVA COLUMNA
@@ -1624,6 +1631,7 @@ def export_apsa_csv(
         select(
             ApsaProtocol.codigo_cmdic,
             ApsaProtocol.descripcion,
+            ApsaProtocol.tipo,
             ApsaProtocol.tag,
             ApsaProtocol.subsistema,
             aconex_exists.label("aconex_cargado"),
@@ -1643,6 +1651,7 @@ def export_apsa_csv(
             or_(
                 ApsaProtocol.codigo_cmdic.ilike(like),
                 ApsaProtocol.descripcion.ilike(like),
+                ApsaProtocol.tipo.ilike(like),
                 ApsaProtocol.tag.ilike(like),
             )
         )
@@ -1665,12 +1674,16 @@ def export_apsa_csv(
     ])
 
     # OJO: ahora desempacamos 6 columnas (incluye status)
-    for cod, desc, tag, subs, cargado, status in rows:
+    for cod, desc, tipo, tag, subs, cargado, status in rows:
+        desc_s  = (desc or "").strip()
+        tipo_s  = (tipo or "").strip()
+        desc_final = " - ".join([x for x in [tipo_s, desc_s] if x])
+        
         status_str = (status or "").strip().upper()  # "ABIERTO" / "CERRADO" / ""
         w.writerow([
             (cod or "").strip(),
             "0",
-            (desc or "").strip(),
+            desc_final,
             (str(tag) if tag is not None else "-").strip() or "-",
             (subs or "").strip(),
             "Cargado" if bool(cargado) else "",
