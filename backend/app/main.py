@@ -573,6 +573,7 @@ def upload_apsa(
         return None
 
     COL_CODIGO = find_col(df.columns, "CÓDIGO CMDIC", "CODIGO CMDIC")
+    COL_TIPO = find_col(df.columns, "TIPO PROTOCOLO")
     COL_DESC   = find_col(df.columns, "DESCRIPCIÓN DE ELEMENTOS", "DESCRIPCIÓN", "DESCRIPCION")
     COL_TAG    = find_col(df.columns, "TAG")
     COL_SUBS   = find_col(df.columns, "SUBSISTEMA")
@@ -581,6 +582,7 @@ def upload_apsa(
 
     required = [
         ("N° CÓDIGO CMDIC", COL_CODIGO),
+        ("TIPO PROTOCOLO", COL_TIPO),
         ("DESCRIPCIÓN/DE ELEMENTOS", COL_DESC),
         ("TAG", COL_TAG),
         ("SUBSISTEMA", COL_SUBS),
@@ -625,6 +627,7 @@ def upload_apsa(
 
         codigo = _norm(r.get(COL_CODIGO)) or ""
         desc   = _norm(r.get(COL_DESC)) or ""
+        tip   = _norm(r.get(COL_TIPO)) or ""
 
         # ---- TAG: normalizar + recortar al límite real ----
         tag_val = _norm(r.get(COL_TAG))
@@ -639,6 +642,7 @@ def upload_apsa(
         rows.append(ApsaProtocol(
             load_id=load.id,
             codigo_cmdic=codigo,
+            tipo=tip,
             descripcion=desc,
             tag=tag_val,
             subsistema=subs_str,
