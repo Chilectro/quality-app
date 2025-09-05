@@ -52,6 +52,7 @@ def admin_ping(decoded=Depends(require_roles("Admin"))):
 
 # === NUEVO: endpoints de carga APSA/ACONEX ===
 from io import BytesIO
+from io import StringIO
 from fastapi import UploadFile, File, HTTPException, Depends
 from sqlalchemy.orm import Session
 import pandas as pd
@@ -1725,4 +1726,100 @@ def export_apsa_csv(
     from fastapi.responses import Response
     fname = "log_protocolos" + (f"_{'_'.join(fname_parts)}" if fname_parts else "") + ".csv"
     headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
+
+@app.get("/export/aconex-ss-errors.csv")
+def export_aconex_ss_errors(
+    db: Session = Depends(get_db),
+    decoded=Depends(verify_token),
+):
+    apsa_id = _latest_load_id(db, SourceEnum.APSA)
+    aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
+    if not apsa_id or not aconex_id:
+        raise HTTPException(status_code=400, detail="Falta carga APSA o ACONEX")
+
+    def N(expr):
+        return func.replace(
+            func.replace(
+                func.replace(func.upper(func.trim(expr)), " ", ""),
+                "-", ""
+            ),
+            "_", ""
+        )
+
+    # Existen matches por código…
+    exists_code_only = select(1).where(
+        AconexDoc.load_id == aconex_id,
+        N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+    ).exists()
+
+    # …pero NO con el mismo subsistema.
+    exists_code_ss = select(1).where(
+        AconexDoc.load_id == aconex_id,
+        N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+        N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),   # <— AJUSTA NOMBRE SI DIFERENTE
+    ).exists()
+
+    # Subconsulta: lista de subsistemas ACONEX para ese código que difieren del APSA
+    aconex_ss_list = (
+        select(func.group_concat(func.distinct(AconexDoc.subsystem_code)))
+        .where(
+            AconexDoc.load_id == aconex_id,
+            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+            N(AconexDoc.subsystem_code) != N(ApsaProtocol.subsistema),
+        )
+        .correlate(ApsaProtocol)
+        .scalar_subquery()
+        .label("aconex_subsistemas")
+    )
+
+    q = (
+        select(
+            ApsaProtocol.codigo_cmdic,
+            ApsaProtocol.descripcion,
+            ApsaProtocol.tipo,
+            ApsaProtocol.tag,
+            ApsaProtocol.subsistema,
+            ApsaProtocol.status_bim360,
+            aconex_ss_list,
+        )
+        .where(
+            ApsaProtocol.load_id == apsa_id,
+            exists_code_only,
+            ~exists_code_ss,
+        )
+        .order_by(ApsaProtocol.subsistema.asc(), ApsaProtocol.codigo_cmdic.asc())
+    )
+
+    rows = db.execute(q).all()
+
+    buf = StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow([
+        "NÚMERO DE DOCUMENTO ACONEX",
+        "REV.",
+        "DESCRIPCIÓN",
+        "TAG",
+        "SUBSISTEMA (APSA)",
+        "SUBSISTEMA(S) EN ACONEX",
+        "Status"
+    ])
+
+    for cod, desc, tipo, tag, subs, status, aconex_ss in rows:
+        tipo_s = (tipo or "").strip()
+        desc_s = (desc or "").strip()
+        descripcion_final = " - ".join([x for x in [tipo_s, desc_s] if x])
+        w.writerow([
+            (cod or "").strip(),
+            "0",
+            descripcion_final,
+            (str(tag) if tag is not None else "-").strip() or "-",
+            (subs or "").strip(),
+            (aconex_ss or "").strip(),
+            (status or "").strip(),
+        ])
+
+    csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")
+    from fastapi.responses import Response
+    headers = {"Content-Disposition": 'attachment; filename="aconex_ss_errors.csv"'}
     return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
