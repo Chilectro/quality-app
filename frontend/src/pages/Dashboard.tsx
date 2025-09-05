@@ -12,6 +12,7 @@ type Cards = {
   aconex_cargados: number;   // total cargados (filas crudas del log)
   aconex_validos?: number;   // con match
   aconex_invalidos?: number; // sin match
+  aconex_error_ss?: number;
 };
 
 type DisciplinaRow = {
@@ -138,6 +139,26 @@ export default function Dashboard() {
 
   const token = useAuthStore((s) => s.accessToken);
   const API_URL = import.meta.env.VITE_API_URL as string;
+
+  const downloadSSErrorsCsv = async () => {
+  try {
+    const url = `${API_URL}/export/aconex-ss-errors.csv`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error("No se pudo descargar la lista de errores de SS");
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "aconex_ss_errors.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e: any) {
+    setError(e?.message || "Error al descargar errores de SS");
+  }
+};
 
   // Descarga CSV de "Aconex sin match"
   const downloadUnmatchedCsv = async (strict = false) => {
@@ -374,6 +395,28 @@ export default function Dashboard() {
           <StatCard title="Registros extra por duplicados" value={fmt(duplicados_extras)} />
         </div>
       </section>
+
+      {/* Análisis Aconex — Errores de SS */}
+<section className="space-y-3">
+  <div className="flex items-center justify-between">
+    <h3 className="text-lg font-medium">Análisis Aconex — Errores de SS</h3>
+  </div>
+  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
+    <StatCard title="Protocolos con Error de SS" value={fmt(cards?.aconex_error_ss)} />
+    <div className="rounded-2xl border bg-white p-4 flex items-center justify-between">
+      <div>
+        <div className="text-sm text-gray-500">Descargar</div>
+        <div className="text-base font-medium">Lista de errores de SS</div>
+      </div>
+      <button
+        onClick={downloadSSErrorsCsv}
+        className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
+      >
+        Descargar (CSV)
+      </button>
+    </div>
+  </div>
+</section>
 
       {/* Disciplinas */}
       <section className="space-y-3">
