@@ -763,7 +763,7 @@ def metrics_cards(db: Session = Depends(get_db), decoded=Depends(verify_token)):
     apsa_id = _latest_load_id(db, SourceEnum.APSA)
     aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
 
-    # --- Métricas APSA (universo/abiertos/cerrados)
+    # --- Métricas APSA
     abiertos = cerrados = universo = 0
     if apsa_id:
         abiertos = db.execute(
@@ -782,32 +782,22 @@ def metrics_cards(db: Session = Depends(get_db), decoded=Depends(verify_token)):
 
         universo = (abiertos or 0) + (cerrados or 0)
 
-    # --- Normalizador SQL (sin depender de utils)
-    # TRIM + UPPER + remove spaces/hyphens/underscores para comparar códigos
+    # --- Normalizador SQL
     def N(expr):
         return func.replace(
             func.replace(
-                func.replace(
-                    func.upper(func.trim(expr)),
-                    " ", ""
-                ),
+                func.replace(func.upper(func.trim(expr)), " ", ""),
                 "-", ""
             ),
             "_", ""
         )
 
     # --- Métricas ACONEX
-    # Queremos:
-    #  - aconex_cargados   -> filas crudas del log (total rows)
-    #  - aconex_unicos     -> documentos únicos normalizados
-    #  - aconex_validos    -> doc únicos normalizados que matchean con APSA por codigo_cmdic normalizado
-    #  - aconex_invalidos  -> unicos - validos
-    #  - aconex_duplicados -> filas crudas - unicos
     aconex_rows = aconex_unicos = aconex_validos = 0
-    aconex_error_ss = 0
+    aconex_error_ss = 0  # NUEVO
 
     if aconex_id:
-        # 1) Filas crudas (todo el log cargado)
+        # 1) Filas crudas
         aconex_rows = db.execute(
             select(func.count()).select_from(AconexDoc).where(AconexDoc.load_id == aconex_id)
         ).scalar() or 0
@@ -817,34 +807,11 @@ def metrics_cards(db: Session = Depends(get_db), decoded=Depends(verify_token)):
             select(func.count(func.distinct(N(AconexDoc.document_no)))).where(AconexDoc.load_id == aconex_id)
         ).scalar() or 0
 
-        # === NUEVO: “Error de SS” a nivel de protocolo APSA ===
-            # exists_code_only: hay match por código
-            exists_code_only = select(1).where(
-                AconexDoc.load_id == aconex_id,
-                N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
-            ).exists()
-
-            # exists_code_ss: hay match por código + subsistema
-            exists_code_ss = select(1).where(
-                AconexDoc.load_id == aconex_id,
-                N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
-                N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),   # <— AJUSTA NOMBRE SI DIFERENTE
-            ).exists()
-
-            aconex_error_ss = db.execute(
-                select(func.count()).select_from(ApsaProtocol).where(
-                    ApsaProtocol.load_id == apsa_id,
-                    exists_code_only,          # hay algún Aconex con ese código
-                    ~exists_code_ss            # pero ninguno con el mismo subsistema
-                )
-            ).scalar() or 0
-
-        # 3) Válidos: doc únicos normalizados que matchean con APSA por código (normalizado)
+        # 3) Válidos: doc únicos que matchean con APSA por código normalizado
         if apsa_id:
             aconex_validos = db.execute(
                 select(func.count(func.distinct(N(AconexDoc.document_no)))).where(
                     AconexDoc.load_id == aconex_id,
-                    # correlated subquery con .exists() (no requiere import exists)
                     select(1).where(
                         ApsaProtocol.load_id == apsa_id,
                         N(ApsaProtocol.codigo_cmdic) == N(AconexDoc.document_no)
@@ -852,23 +819,42 @@ def metrics_cards(db: Session = Depends(get_db), decoded=Depends(verify_token)):
                 )
             ).scalar() or 0
 
+            # === NUEVO: Protocolos APSA con "Error de SS"
+            # Hay match por código, pero NO por subsistema
+            exists_code_only = select(1).where(
+                AconexDoc.load_id == aconex_id,
+                N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+            ).exists()
+
+            exists_code_ss = select(1).where(
+                AconexDoc.load_id == aconex_id,
+                N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+                N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),  # ajusta si tu campo se llama distinto
+            ).exists()
+
+            aconex_error_ss = db.execute(
+                select(func.count()).select_from(ApsaProtocol).where(
+                    ApsaProtocol.load_id == apsa_id,
+                    exists_code_only,
+                    ~exists_code_ss
+                )
+            ).scalar() or 0
+
     aconex_invalidos = max(0, (aconex_unicos or 0) - (aconex_validos or 0))
     aconex_duplicados = max(0, (aconex_rows or 0) - (aconex_unicos or 0))
 
-    # RESPUESTA: mantenemos claves para el front actual y añadimos diagnóstico
     return {
         "universo": int(universo),
         "abiertos": int(abiertos),
         "cerrados": int(cerrados),
 
-        # Tarjeta actual del front:
-        "aconex_cargados": int(aconex_rows),      # filas crudas del log (ej. 9345)
+        "aconex_cargados": int(aconex_rows),
+        "aconex_unicos": int(aconex_unicos),
+        "aconex_validos": int(aconex_validos),
+        "aconex_invalidos": int(aconex_invalidos),
+        "aconex_duplicados": int(aconex_duplicados),
 
-        # Extras/diagnóstico (útiles en el futuro):
-        "aconex_unicos": int(aconex_unicos),             # ej. 9276
-        "aconex_validos": int(aconex_validos),           # ej. 9043
-        "aconex_invalidos": int(aconex_invalidos),       # ej. 233
-        "aconex_duplicados": int(aconex_duplicados),     # ej. 69
+        # NUEVO
         "aconex_error_ss": int(aconex_error_ss),
     }
 
