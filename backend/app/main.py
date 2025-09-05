@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, and_, or_, case
+from sqlalchemy import select, func, and_, or_, case, litera, false
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from .auth import verify_token, require_roles
@@ -1516,22 +1516,37 @@ def apsa_list(
         )
 
     if aconex_id:
-        aconex_exists = select(1).where(
+        # Coincidencia por código Y subsistema
+        exists_code_ss = select(1).where(
             AconexDoc.load_id == aconex_id,
-            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic)
+            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+            N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),   # <-- AJUSTA NOMBRE SI DIFERENTE
+        ).exists()
+
+        # Coincidencia solo por código
+        exists_code_only = select(1).where(
+            AconexDoc.load_id == aconex_id,
+            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
         ).exists()
     else:
-        aconex_exists = false()  # <-- importante
+        exists_code_ss = false()
+        exists_code_only = false()
 
-    # base query (7 columnas)
+    # CASE -> "Cargado" / "Error de SS" / ""
+    aconex_flag = case(
+        (exists_code_ss, literal("Cargado")),
+        (exists_code_only, literal("Error de SS")),
+        else_=literal("")
+    ).label("aconex_flag")
+
     base = select(
         ApsaProtocol.id,
         ApsaProtocol.codigo_cmdic,
         ApsaProtocol.descripcion,
-        ApsaProtocol.tipo,
+        ApsaProtocol.tipo,               # si tienes 'tipo' en DB
         ApsaProtocol.tag,
         ApsaProtocol.subsistema,
-        aconex_exists.label("aconex_cargado"),
+        aconex_flag,                     # <- texto ya evaluado en SQL
         ApsaProtocol.status_bim360,
     ).where(ApsaProtocol.load_id == apsa_id)
 
@@ -1545,17 +1560,13 @@ def apsa_list(
             or_(
                 ApsaProtocol.codigo_cmdic.ilike(like),
                 ApsaProtocol.descripcion.ilike(like),
-                ApsaProtocol.tipo.ilike(like), 
+                ApsaProtocol.tipo.ilike(like),  # si no tienes 'tipo', quita esta línea
                 ApsaProtocol.tag.ilike(like),
             )
         )
 
-    # total
-    total = db.execute(
-        select(func.count()).select_from(base.subquery())
-    ).scalar() or 0
+    total = db.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
 
-    # paginación
     page = max(1, int(page))
     page_size = min(500, max(1, int(page_size)))
     offset = (page - 1) * page_size
@@ -1567,22 +1578,20 @@ def apsa_list(
     ).all()
 
     rows = []
-    #       ▼ añade 'status' al desempacado
-    for _, cod, desc, tipo, tag, subs, cargado, status in rows_db:
-        desc_s  = (desc or "").strip()
-        tipo_s  = (tipo or "").strip()
-        # concatenación: "TIPO - DESCRIPCIÓN", si falta uno usa el otro
-        desc_final = " - ".join([x for x in [tipo_s, desc_s] if x])
-        
-        status_norm = (status or "").strip().upper()
+    for _, cod, desc, tipo, tag, subs, aconex_txt, status in rows_db:
+        # Si quieres mantener la concatenación tipo - descripción:
+        tipo_s = (tipo or "").strip()
+        desc_s = (desc or "").strip()
+        descripcion_final = " - ".join([x for x in [tipo_s, desc_s] if x])  # usa desc_s si no tienes 'tipo'
+
         rows.append({
-            "document_no": (cod or "").strip(),                      # NÚMERO DE DOCUMENTO ACONEX
-            "rev": "0",                                              # REV. fijo
-            "descripcion": desc_final,                     # DESCRIPCIÓN
+            "document_no": (cod or "").strip(),
+            "rev": "0",
+            "descripcion": descripcion_final,
             "tag": (str(tag) if tag is not None else "-").strip() or "-",
             "subsistema": (subs or "").strip(),
-            "aconex": "Cargado" if bool(cargado) else "",            # NUEVA COLUMNA
-            "status": status_norm,                                   # NUEVA COLUMNA
+            "aconex": (aconex_txt or "").strip(),                     # "Cargado" | "Error de SS" | ""
+            "status": (status or "").strip(),
         })
 
     return {"rows": rows, "total": int(total), "page": page, "page_size": page_size}
@@ -1603,44 +1612,48 @@ def export_apsa_csv(
 
     aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
 
-    # Normalizador para comparar códigos
     def N(expr):
         return func.replace(
             func.replace(
-                func.replace(
-                    func.upper(func.trim(expr)),
-                    " ", ""
-                ),
+                func.replace(func.upper(func.trim(expr)), " ", ""),
                 "-", ""
             ),
             "_", ""
         )
 
-    # exists correlacionado contra Aconex (o FALSE si no hay carga Aconex)
     if aconex_id:
-        aconex_exists = select(1).where(
+        exists_code_ss = select(1).where(
             AconexDoc.load_id == aconex_id,
-            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic)
+            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+            N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),  # <-- AJUSTA NOMBRE SI DIFERENTE
+        ).exists()
+
+        exists_code_only = select(1).where(
+            AconexDoc.load_id == aconex_id,
+            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
         ).exists()
     else:
-        from sqlalchemy import false
-        aconex_exists = false()
+        exists_code_ss = false()
+        exists_code_only = false()
 
-    # Selecciona también el status
+    aconex_flag = case(
+        (exists_code_ss, literal("Cargado")),
+        (exists_code_only, literal("Error de SS")),
+        else_=literal("")
+    ).label("aconex_flag")
+
     qsel = (
         select(
             ApsaProtocol.codigo_cmdic,
             ApsaProtocol.descripcion,
-            ApsaProtocol.tipo,
+            ApsaProtocol.tipo,               # si tienes 'tipo'
             ApsaProtocol.tag,
             ApsaProtocol.subsistema,
-            aconex_exists.label("aconex_cargado"),
-            ApsaProtocol.status_bim360.label("status"),   # <- aquí va el status
+            aconex_flag,
+            ApsaProtocol.status_bim360,
         )
         .where(ApsaProtocol.load_id == apsa_id)
     )
-
-    # Filtros
     if subsistema:
         qsel = qsel.where(ApsaProtocol.subsistema == subsistema)
     if disciplina:
@@ -1651,7 +1664,7 @@ def export_apsa_csv(
             or_(
                 ApsaProtocol.codigo_cmdic.ilike(like),
                 ApsaProtocol.descripcion.ilike(like),
-                ApsaProtocol.tipo.ilike(like),
+                ApsaProtocol.tipo.ilike(like),   # si no tienes 'tipo', quita esta línea
                 ApsaProtocol.tag.ilike(like),
             )
         )
@@ -1660,39 +1673,26 @@ def export_apsa_csv(
         qsel.order_by(ApsaProtocol.subsistema.asc(), ApsaProtocol.codigo_cmdic.asc())
     ).all()
 
-    # CSV ; con BOM para Excel
     buf = StringIO()
     w = csv.writer(buf, delimiter=";")
-    w.writerow([
-        "NÚMERO DE DOCUMENTO ACONEX",
-        "REV.",
-        "DESCRIPCIÓN",
-        "TAG",
-        "SUBSISTEMA",
-        "Aconex",
-        "Status"
-    ])
+    w.writerow(["NÚMERO DE DOCUMENTO ACONEX", "REV.", "DESCRIPCIÓN", "TAG", "SUBSISTEMA", "Aconex", "Status"])
 
-    # OJO: ahora desempacamos 6 columnas (incluye status)
-    for cod, desc, tipo, tag, subs, cargado, status in rows:
-        desc_s  = (desc or "").strip()
-        tipo_s  = (tipo or "").strip()
-        desc_final = " - ".join([x for x in [tipo_s, desc_s] if x])
-        
-        status_str = (status or "").strip().upper()  # "ABIERTO" / "CERRADO" / ""
+    for cod, desc, tipo, tag, subs, aconex_txt, status in rows:
+        tipo_s = (tipo or "").strip()
+        desc_s = (desc or "").strip()
+        descripcion_final = " - ".join([x for x in [tipo_s, desc_s] if x])
+
         w.writerow([
             (cod or "").strip(),
             "0",
-            desc_final,
+            descripcion_final,
             (str(tag) if tag is not None else "-").strip() or "-",
             (subs or "").strip(),
-            "Cargado" if bool(cargado) else "",
-            status_str,  # escribe el status en la última columna
+            (aconex_txt or "").strip(),               # "Cargado" | "Error de SS" | ""
+            (status or "").strip(),
         ])
 
     csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")
-
-    # Nombre de archivo con filtros
     fname_parts = []
     if disciplina:  fname_parts.append(f"disc-{disciplina}")
     if subsistema:  fname_parts.append(f"sub-{subsistema.replace('/', '_')}")
