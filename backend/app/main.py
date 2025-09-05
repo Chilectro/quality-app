@@ -803,6 +803,7 @@ def metrics_cards(db: Session = Depends(get_db), decoded=Depends(verify_token)):
     #  - aconex_invalidos  -> unicos - validos
     #  - aconex_duplicados -> filas crudas - unicos
     aconex_rows = aconex_unicos = aconex_validos = 0
+    aconex_error_ss = 0
 
     if aconex_id:
         # 1) Filas crudas (todo el log cargado)
@@ -814,6 +815,28 @@ def metrics_cards(db: Session = Depends(get_db), decoded=Depends(verify_token)):
         aconex_unicos = db.execute(
             select(func.count(func.distinct(N(AconexDoc.document_no)))).where(AconexDoc.load_id == aconex_id)
         ).scalar() or 0
+
+        # === NUEVO: “Error de SS” a nivel de protocolo APSA ===
+            # exists_code_only: hay match por código
+            exists_code_only = select(1).where(
+                AconexDoc.load_id == aconex_id,
+                N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+            ).exists()
+
+            # exists_code_ss: hay match por código + subsistema
+            exists_code_ss = select(1).where(
+                AconexDoc.load_id == aconex_id,
+                N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+                N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),   # <— AJUSTA NOMBRE SI DIFERENTE
+            ).exists()
+
+            aconex_error_ss = db.execute(
+                select(func.count()).select_from(ApsaProtocol).where(
+                    ApsaProtocol.load_id == apsa_id,
+                    exists_code_only,          # hay algún Aconex con ese código
+                    ~exists_code_ss            # pero ninguno con el mismo subsistema
+                )
+            ).scalar() or 0
 
         # 3) Válidos: doc únicos normalizados que matchean con APSA por código (normalizado)
         if apsa_id:
@@ -845,6 +868,7 @@ def metrics_cards(db: Session = Depends(get_db), decoded=Depends(verify_token)):
         "aconex_validos": int(aconex_validos),           # ej. 9043
         "aconex_invalidos": int(aconex_invalidos),       # ej. 233
         "aconex_duplicados": int(aconex_duplicados),     # ej. 69
+        "aconex_error_ss": int(aconex_error_ss),
     }
 
 @app.get("/metrics/disciplinas")
