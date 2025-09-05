@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, and_, or_, case, litera, false
+from sqlalchemy import select, func, and_, or_, case, literal, false
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from .auth import verify_token, require_roles
