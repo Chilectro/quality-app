@@ -294,7 +294,7 @@ export default function Dashboard() {
 
   // Agregado "General": suma por subsistema las métricas de obra + mecánico + I&E
   const aggregatedGeneral = useMemo<SubRow[]>(() => {
-    const sources: SubRow[][] = [subsObra ?? [], subsMec ?? [], subsIE ?? []];
+    const sources: SubRow[][] = subsMec ?? [], subsIE ?? []];
     const map = new Map<string, SubRow>();
     for (const arr of sources) {
       for (const r of arr) {
