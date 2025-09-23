@@ -129,7 +129,7 @@ export default function Dashboard() {
   const [cards, setCards] = useState<Cards | null>(null);
   const [discRows, setDiscRows] = useState<DisciplinaRow[]>([]);
   const [grpRows, setGrpRows] = useState<GrupoRow[]>([]);
-  const [tab, setTab] = useState<"obra" | "mecanico" | "ie">("obra");
+  const [tab, setTab] = useState<"obra" | "mecanico" | "ie" | "general">("obra");
   const [subsObra, setSubsObra] = useState<SubRow[] | null>(null);
   const [subsMec, setSubsMec] = useState<SubRow[] | null>(null);
   const [subsIE, setSubsIE] = useState<SubRow[] | null>(null);
@@ -141,24 +141,24 @@ export default function Dashboard() {
   const API_URL = import.meta.env.VITE_API_URL as string;
 
   const downloadSSErrorsCsv = async () => {
-  try {
-    const url = `${API_URL}/export/aconex-ss-errors.csv`;
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-      credentials: "include",
-    });
-    if (!res.ok) throw new Error("No se pudo descargar la lista de errores de SS");
-    const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "aconex_ss_errors.csv";
-    a.click();
-    URL.revokeObjectURL(a.href);
-  } catch (e: any) {
-    setError(e?.message || "Error al descargar errores de SS");
-  }
-};
+    try {
+      const url = `${API_URL}/export/aconex-ss-errors.csv`;
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("No se pudo descargar la lista de errores de SS");
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "aconex_ss_errors.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e: any) {
+      setError(e?.message || "Error al descargar errores de SS");
+    }
+  };
 
   // Descarga CSV de "Aconex sin match"
   const downloadUnmatchedCsv = async (strict = false) => {
@@ -252,7 +252,7 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Lazy load de subsistemas por tab
+  // Lazy load de subsistemas por tab (incluye "general": trae lo que falte)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -269,6 +269,20 @@ export default function Dashboard() {
           const rows = await apiGet<SubRow[]>("/metrics/subsistemas?group=ie");
           if (alive) setSubsIE(rows);
         }
+        if (tab === "general") {
+          // Trae lo que falte de los tres para poder agregar
+          const promises: Promise<void>[] = [];
+          if (!subsObra) {
+            promises.push(apiGet<SubRow[]>("/metrics/subsistemas?group=obra").then((rows) => { if (alive) setSubsObra(rows); }));
+          }
+          if (!subsMec) {
+            promises.push(apiGet<SubRow[]>("/metrics/subsistemas?group=mecanico").then((rows) => { if (alive) setSubsMec(rows); }));
+          }
+          if (!subsIE) {
+            promises.push(apiGet<SubRow[]>("/metrics/subsistemas?group=ie").then((rows) => { if (alive) setSubsIE(rows); }));
+          }
+          if (promises.length) await Promise.all(promises);
+        }
       } catch (e: any) {
         setError(e?.message || "Error al cargar subsistemas");
       }
@@ -278,11 +292,43 @@ export default function Dashboard() {
     };
   }, [tab, subsObra, subsMec, subsIE]);
 
+  // Agregado "General": suma por subsistema las métricas de obra + mecánico + I&E
+  const aggregatedGeneral = useMemo<SubRow[]>(() => {
+    const sources: SubRow[][] = [subsObra ?? [], subsMec ?? [], subsIE ?? []];
+    const map = new Map<string, SubRow>();
+    for (const arr of sources) {
+      for (const r of arr) {
+        const key = r.subsistema || "";
+        if (!map.has(key)) {
+          map.set(key, {
+            subsistema: key,
+            universo: 0,
+            abiertos: 0,
+            cerrados: 0,
+            pendiente_cierre: 0,
+            cargado_aconex: 0,
+            pendiente_aconex: 0,
+          });
+        }
+        const acc = map.get(key)!;
+        acc.universo += Number(r.universo) || 0;
+        acc.abiertos += Number(r.abiertos) || 0;
+        acc.cerrados += Number(r.cerrados) || 0;
+        acc.pendiente_cierre += Number(r.pendiente_cierre) || 0;
+        acc.cargado_aconex += Number(r.cargado_aconex) || 0;
+        acc.pendiente_aconex += Number(r.pendiente_aconex) || 0;
+      }
+    }
+    return Array.from(map.values());
+  }, [subsObra, subsMec, subsIE]);
+
   const currentSubs = useMemo(() => {
     if (tab === "obra") return subsObra ?? [];
     if (tab === "mecanico") return subsMec ?? [];
-    return subsIE ?? [];
-  }, [tab, subsObra, subsMec, subsIE]);
+    if (tab === "ie") return subsIE ?? [];
+    // general
+    return aggregatedGeneral;
+  }, [tab, subsObra, subsMec, subsIE, aggregatedGeneral]);
 
   // Ordenar por 'subsistema' (alfanumérico)
   const orderedSubs = useMemo(() => {
@@ -397,26 +443,26 @@ export default function Dashboard() {
       </section>
 
       {/* Análisis Aconex — Errores de SS */}
-<section className="space-y-3">
-  <div className="flex items-center justify-between">
-    <h3 className="text-lg font-medium">Análisis Aconex — Errores de SS</h3>
-  </div>
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
-    <StatCard title="Protocolos con Error de SS" value={fmt(cards?.aconex_error_ss)} />
-    <div className="rounded-2xl border bg-white p-4 flex items-center justify-between">
-      <div>
-        <div className="text-sm text-gray-500">Descargar</div>
-        <div className="text-base font-medium">Lista de errores de SS</div>
-      </div>
-      <button
-        onClick={downloadSSErrorsCsv}
-        className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
-      >
-        Descargar (CSV)
-      </button>
-    </div>
-  </div>
-</section>
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-medium">Análisis Aconex — Errores de SS</h3>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
+          <StatCard title="Protocolos con Error de SS" value={fmt(cards?.aconex_error_ss)} />
+          <div className="rounded-2xl border bg-white p-4 flex items-center justify-between">
+            <div>
+              <div className="text-sm text-gray-500">Descargar</div>
+              <div className="text-base font-medium">Lista de errores de SS</div>
+            </div>
+            <button
+              onClick={downloadSSErrorsCsv}
+              className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
+            >
+              Descargar (CSV)
+            </button>
+          </div>
+        </div>
+      </section>
 
       {/* Disciplinas */}
       <section className="space-y-3">
@@ -475,6 +521,13 @@ export default function Dashboard() {
               onClick={() => setTab("ie")}
             >
               I&amp;E
+            </button>
+            <button
+              className={`px-3 py-2 rounded-lg border ${tab === "general" ? "bg-black text-white" : "bg-white"}`}
+              onClick={() => setTab("general")}
+              title="Suma Obra + Mecánico + I&E por subsistema"
+            >
+              General
             </button>
           </div>
           <ExportCSVButton rows={orderedSubs} filename={`subsistemas_${tab}.csv`} />
