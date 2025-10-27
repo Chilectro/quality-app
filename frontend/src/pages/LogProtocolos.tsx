@@ -38,6 +38,10 @@ export default function LogProtocolos() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
+  const [statusFilter, setStatusFilter] = useState<string>(""); // "", "ABIERTO", "CERRADO"
+  const [onlyCargado, setOnlyCargado] = useState<boolean>(false);
+  const [onlyErrorSS, setOnlyErrorSS] = useState<boolean>(false);
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -69,6 +73,9 @@ export default function LogProtocolos() {
       if (subsistema) params.set("subsistema", subsistema);
       if (disciplina) params.set("disciplina", disciplina);
       if (q.trim()) params.set("q", q.trim());
+      if (statusFilter) params.set("status", statusFilter);
+      if (onlyCargado) params.set("cargado", "true");
+      if (onlyErrorSS) params.set("error_ss", "true");
       params.set("page", String(p));
       params.set("page_size", String(pageSize));
 
@@ -92,6 +99,9 @@ export default function LogProtocolos() {
     if (subsistema) params.set("subsistema", subsistema);
     if (disciplina) params.set("disciplina", disciplina);
     if (q.trim()) params.set("q", q.trim());
+    if (statusFilter) params.set("status", statusFilter);
+    if (onlyCargado) params.set("cargado", "true");
+    if (onlyErrorSS) params.set("error_ss", "true");
 
     const url = `${API_URL}/export/apsa.csv?${params.toString()}`;
     fetch(url, { headers: { Authorization: `Bearer ${token}` }, credentials: "include" })
@@ -117,7 +127,7 @@ export default function LogProtocolos() {
       <h1 className="text-xl font-semibold">Log Protocolos</h1>
 
       {/* Filtros */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
         <div>
           <label className="block text-sm text-gray-600 mb-1">Subsistema</label>
           <select
@@ -161,6 +171,47 @@ export default function LogProtocolos() {
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+
+        <div>
+  <label className="block text-sm text-gray-600 mb-1">Estado</label>
+  <select
+    className="w-full border rounded-lg px-3 py-2"
+    value={statusFilter}
+    onChange={(e) => setStatusFilter(e.target.value)}
+  >
+    <option value="">— Todos —</option>
+    <option value="ABIERTO">Abiertos</option>
+    <option value="CERRADO">Cerrados</option>
+  </select>
+</div>
+
+<div className="flex items-center gap-4">
+  <label className="inline-flex items-center gap-2">
+    <input
+      type="checkbox"
+      checked={onlyCargado}
+      onChange={(e) => {
+        const v = e.target.checked;
+        setOnlyCargado(v);
+        if (v) setOnlyErrorSS(false); // exclusión
+      }}
+    />
+    <span>Solo cargados Aconex</span>
+  </label>
+
+  <label className="inline-flex items-center gap-2">
+    <input
+      type="checkbox"
+      checked={onlyErrorSS}
+      onChange={(e) => {
+        const v = e.target.checked;
+        setOnlyErrorSS(v);
+        if (v) setOnlyCargado(false); // exclusión
+      }}
+    />
+    <span>Solo Error SS</span>
+  </label>
+</div>
 
         <div className="flex gap-2">
           <button onClick={onBuscar} className="px-4 py-2 rounded-lg bg-black text-white">
