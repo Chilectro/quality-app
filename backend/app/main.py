@@ -6,6 +6,7 @@ from .auth import verify_token, require_roles
 from pydantic import BaseModel, EmailStr, constr
 from fastapi import Path
 from typing import Literal
+from typing import Optional
 
 
 app = FastAPI(title="Quality Backend", version="0.1.0")
@@ -1499,68 +1500,65 @@ def apsa_options(db: Session = Depends(get_db), decoded=Depends(verify_token)):
 # --- Listado paginado de protocolos APSA (JSON) ---
 @app.get("/apsa/list")
 def apsa_list(
-    subsistema: str | None = None,
-    disciplina: str | None = None,
-    q: str | None = None,             # búsqueda libre en codigo/descripcion/tag
+    subsistema: Optional[str] = None,
+    disciplina: Optional[str] = None,
+    q: Optional[str] = None,
+    # NUEVO:
+    status: Optional[str] = None,          # "ABIERTO" o "CERRADO"
+    cargado: bool = False,                 # solo los cargados en Aconex (code+SS)
+    error_ss: bool = False,                # solo los con error de SS (code match pero SS distinto)
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
-    decoded=Depends(verify_token)
+    decoded=Depends(verify_token),
 ):
     apsa_id = _latest_load_id(db, SourceEnum.APSA)
     if not apsa_id:
         return {"rows": [], "total": 0, "page": page, "page_size": page_size}
 
+    if cargado and error_ss:
+        raise HTTPException(status_code=400, detail="Parámetros incompatibles: 'cargado' y 'error_ss' no pueden ser verdaderos a la vez")
+
     aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
 
-    # Normalizador SQL igual al de metrics_cards
+    # Normalizador SQL (igual al de metrics_cards)
     def N(expr):
         return func.replace(
             func.replace(
-                func.replace(
-                    func.upper(func.trim(expr)),
-                    " ", ""
-                ),
+                func.replace(func.upper(func.trim(expr)), " ", ""),
                 "-", ""
             ),
             "_", ""
         )
 
+    # EXISTS para Aconex
     if aconex_id:
-        # Coincidencia por código Y subsistema
-        exists_code_ss = select(1).where(
-            AconexDoc.load_id == aconex_id,
-            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
-            N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),   # <-- AJUSTA NOMBRE SI DIFERENTE
-        ).exists()
-
-        # Coincidencia solo por código
         exists_code_only = select(1).where(
             AconexDoc.load_id == aconex_id,
             N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
         ).exists()
+
+        exists_code_ss = select(1).where(
+            AconexDoc.load_id == aconex_id,
+            N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
+            N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),  # ajusta el nombre del campo si difiere
+        ).exists()
     else:
-        exists_code_ss = false()
         exists_code_only = false()
+        exists_code_ss = false()
 
-    # CASE -> "Cargado" / "Error de SS" / ""
-    aconex_flag = case(
-        (exists_code_ss, literal("Cargado")),
-        (exists_code_only, literal("Error de SS")),
-        else_=literal("")
-    ).label("aconex_flag")
-
+    # Base SELECT
     base = select(
         ApsaProtocol.id,
         ApsaProtocol.codigo_cmdic,
         ApsaProtocol.descripcion,
-        ApsaProtocol.tipo,               # si tienes 'tipo' en DB
         ApsaProtocol.tag,
         ApsaProtocol.subsistema,
-        aconex_flag,                     # <- texto ya evaluado en SQL
+        exists_code_ss.label("aconex_cargado"),
         ApsaProtocol.status_bim360,
     ).where(ApsaProtocol.load_id == apsa_id)
 
+    # Filtros existentes
     if subsistema:
         base = base.where(ApsaProtocol.subsistema == subsistema)
     if disciplina:
@@ -1571,13 +1569,26 @@ def apsa_list(
             or_(
                 ApsaProtocol.codigo_cmdic.ilike(like),
                 ApsaProtocol.descripcion.ilike(like),
-                ApsaProtocol.tipo.ilike(like),  # si no tienes 'tipo', quita esta línea
                 ApsaProtocol.tag.ilike(like),
             )
         )
 
+    # NUEVO: filtro por status
+    if status:
+        status_up = status.strip().upper()
+        if status_up in ("ABIERTO", "CERRADO"):
+            base = base.where(ApsaProtocol.status_bim360 == status_up)
+
+    # NUEVO: filtro por cargado (match code+SS) o error_ss (code match pero SS distinto)
+    if cargado:
+        base = base.where(exists_code_ss)
+    if error_ss:
+        base = base.where(exists_code_only, ~exists_code_ss)
+
+    # total
     total = db.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
 
+    # paginación
     page = max(1, int(page))
     page_size = min(500, max(1, int(page_size)))
     offset = (page - 1) * page_size
@@ -1588,21 +1599,18 @@ def apsa_list(
             .offset(offset)
     ).all()
 
+    # salida
     rows = []
-    for _, cod, desc, tipo, tag, subs, aconex_txt, status in rows_db:
-        # Si quieres mantener la concatenación tipo - descripción:
-        tipo_s = (tipo or "").strip()
-        desc_s = (desc or "").strip()
-        descripcion_final = " - ".join([x for x in [tipo_s, desc_s] if x])  # usa desc_s si no tienes 'tipo'
-
+    for _, cod, desc, tag, subs, carg, st in rows_db:
+        status_norm = (st or "").strip().upper()
         rows.append({
             "document_no": (cod or "").strip(),
             "rev": "0",
-            "descripcion": descripcion_final,
+            "descripcion": (desc or "").strip(),
             "tag": (str(tag) if tag is not None else "-").strip() or "-",
             "subsistema": (subs or "").strip(),
-            "aconex": (aconex_txt or "").strip(),                     # "Cargado" | "Error de SS" | ""
-            "status": (status or "").strip(),
+            "aconex": "Cargado" if bool(carg) else "",
+            "status": status_norm,
         })
 
     return {"rows": rows, "total": int(total), "page": page, "page_size": page_size}
