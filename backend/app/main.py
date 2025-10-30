@@ -1503,6 +1503,10 @@ def apsa_list(
     subsistema: str | None = None,
     disciplina: str | None = None,
     q: str | None = None,             # búsqueda libre en codigo/descripcion/tag
+    # ⬇️⬇️⬇️  VUELVEN LOS 3 FILTROS
+    status: str | None = None,        # "ABIERTO" | "CERRADO"
+    cargado: bool = False,            # solo con match code+SS
+    error_ss: bool = False,           # code match pero SS distinto
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
@@ -1511,6 +1515,10 @@ def apsa_list(
     apsa_id = _latest_load_id(db, SourceEnum.APSA)
     if not apsa_id:
         return {"rows": [], "total": 0, "page": page, "page_size": page_size}
+
+    # (opcional) mantener la incompatibilidad de antes:
+    if cargado and error_ss:
+        raise HTTPException(status_code=400, detail="Parámetros incompatibles: 'cargado' y 'error_ss' no pueden ser verdaderos a la vez")
 
     aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
 
@@ -1534,13 +1542,14 @@ def apsa_list(
         code_and_ss_exists = select(1).where(
             AconexDoc.load_id == aconex_id,
             N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
-            N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),   # <-- ajusta si tu campo se llama distinto
+            N(AconexDoc.subsystem_code) == N(ApsaProtocol.subsistema),
         ).exists()
     else:
+        from sqlalchemy import false
         code_only_exists = false()
         code_and_ss_exists = false()
 
-    # base query: incluye 'tipo' y los 2 flags
+    # base query: con 'tipo' y flags
     base = select(
         ApsaProtocol.id,
         ApsaProtocol.codigo_cmdic,
@@ -1553,6 +1562,7 @@ def apsa_list(
         code_and_ss_exists.label("has_code_ss"),
     ).where(ApsaProtocol.load_id == apsa_id)
 
+    # filtros “simples”
     if subsistema:
         base = base.where(ApsaProtocol.subsistema == subsistema)
     if disciplina:
@@ -1567,10 +1577,22 @@ def apsa_list(
             )
         )
 
-    # total
-    total = db.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
+    # ✅ filtro por status (ABIERTO/CERRADO)
+    if status:
+        s_up = status.strip().upper()
+        if s_up in ("ABIERTO", "CERRADO"):
+            base = base.where(ApsaProtocol.status_bim360 == s_up)
 
-    # paginación
+    # ✅ filtros Aconex:
+    # - cargado: exige match code+SS
+    # - error_ss: code match PERO SS distinto
+    if cargado:
+        base = base.where(code_and_ss_exists)
+    if error_ss:
+        base = base.where(code_only_exists, ~code_and_ss_exists)
+
+    # total y paginación
+    total = db.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
     page = max(1, int(page))
     page_size = min(500, max(1, int(page_size)))
     offset = (page - 1) * page_size
@@ -1583,9 +1605,10 @@ def apsa_list(
 
     rows = []
     for _, cod, desc, tag, subs, tipo, status_bim360, has_code, has_code_ss in rows_db:
-        # Concatenación tipo + descripción
+        # Concatenación tipo + descripción (no romper el display nuevo)
         desc_out = (f"{(tipo or '').strip()} — {(desc or '').strip()}").strip(" —")
-        # Estado Aconex
+
+        # Display ACONEX
         if bool(has_code_ss):
             aconex_str = "Cargado"
         elif bool(has_code):
@@ -1594,13 +1617,13 @@ def apsa_list(
             aconex_str = ""
 
         rows.append({
-            "document_no": (cod or "").strip(),            # NÚMERO DE DOCUMENTO ACONEX
+            "document_no": (cod or "").strip(),
             "rev": "0",
-            "descripcion": desc_out,                       # <-- concatenada
+            "descripcion": desc_out,
             "tag": (str(tag) if tag is not None else "-").strip() or "-",
             "subsistema": (subs or "").strip(),
-            "aconex": aconex_str,                          # <-- Cargado / Error de SS / ""
-            "status": (status_bim360 or "").upper(),       # por si lo muestras en la tabla
+            "aconex": aconex_str,
+            "status": (status_bim360 or "").upper(),
         })
 
     return {"rows": rows, "total": int(total), "page": page, "page_size": page_size}
@@ -1612,12 +1635,20 @@ def export_apsa_csv(
     subsistema: str | None = None,
     disciplina: str | None = None,
     q: str | None = None,
+    # ⬇️⬇️⬇️  mismos filtros para export
+    status: str | None = None,
+    cargado: bool = False,
+    error_ss: bool = False,
     db: Session = Depends(get_db),
     decoded=Depends(verify_token)
 ):
     apsa_id = _latest_load_id(db, SourceEnum.APSA)
     if not apsa_id:
         raise HTTPException(status_code=400, detail="No hay carga APSA disponible")
+
+    # (opcional) misma incompatibilidad
+    if cargado and error_ss:
+        raise HTTPException(status_code=400, detail="Parámetros incompatibles: 'cargado' y 'error_ss' no pueden ser verdaderos a la vez")
 
     aconex_id = _latest_load_id(db, SourceEnum.ACONEX)
 
@@ -1659,6 +1690,8 @@ def export_apsa_csv(
         )
         .where(ApsaProtocol.load_id == apsa_id)
     )
+
+    # mismos filtros “simples”
     if subsistema:
         qsel = qsel.where(ApsaProtocol.subsistema == subsistema)
     if disciplina:
@@ -1673,11 +1706,26 @@ def export_apsa_csv(
             )
         )
 
-    rows_db = db.execute(qsel.order_by(ApsaProtocol.subsistema.asc(), ApsaProtocol.codigo_cmdic.asc())).all()
+    # ✅ status
+    if status:
+        s_up = status.strip().upper()
+        if s_up in ("ABIERTO", "CERRADO"):
+            qsel = qsel.where(ApsaProtocol.status_bim360 == s_up)
+
+    # ✅ cargado / error_ss
+    if cargado:
+        qsel = qsel.where(code_and_ss_exists)
+    if error_ss:
+        qsel = qsel.where(code_only_exists, ~code_and_ss_exists)
+
+    rows_db = db.execute(
+        qsel.order_by(ApsaProtocol.subsistema.asc(), ApsaProtocol.codigo_cmdic.asc())
+    ).all()
 
     buf = StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(["NÚMERO DE DOCUMENTO ACONEX", "REV.", "DESCRIPCIÓN", "TAG", "SUBSISTEMA", "Aconex", "Status"])
+
     for cod, desc, tag, subs, tipo, status_bim360, has_code, has_code_ss in rows_db:
         desc_out = (f"{(tipo or '').strip()} — {(desc or '').strip()}").strip(" —")
         if bool(has_code_ss):
@@ -1697,12 +1745,17 @@ def export_apsa_csv(
             (status_bim360 or "").upper(),
         ])
 
-    csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")  # BOM para Excel
+    csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")
     fname_parts = []
     if disciplina:  fname_parts.append(f"disc-{disciplina}")
     if subsistema:  fname_parts.append(f"sub-{subsistema.replace('/', '_')}")
     if q and q.strip(): fname_parts.append("q")
+    # (opcional) añade marcas por filtros:
+    if status: fname_parts.append(f"st-{status.strip().upper()}")
+    if cargado: fname_parts.append("cargado")
+    if error_ss: fname_parts.append("errorSS")
 
+    from fastapi.responses import Response
     fname = "log_protocolos" + (f"_{'_'.join(fname_parts)}" if fname_parts else "") + ".csv"
     headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
     return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
