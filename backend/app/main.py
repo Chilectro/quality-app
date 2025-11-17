@@ -926,8 +926,8 @@ def metrics_grupos(db: Session = Depends(get_db), decoded=Depends(verify_token))
         return []
 
     grupos = {
-        "Obra civil": [str(x) for x in range(50, 55)],  # 50-54
-        "Mecánico Pipping": ["55", "56"],
+        "Obra civil": ["50", "51", "52", "54"],  # 50-54
+        "Mecánico Pipping": ["53","55", "56"],
         "I&E": ["57", "58"],
     }
 
