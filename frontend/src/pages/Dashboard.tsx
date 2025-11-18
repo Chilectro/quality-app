@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { apiGet } from "../api/client";
-import StatCard from "../components/StatCard";
+import { StatCard } from "../components/StatCard";
 import { useAuthStore } from "../store/auth";
 
 type Cards = {
