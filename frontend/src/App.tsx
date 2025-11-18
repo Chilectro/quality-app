@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, Link } from "react-router-dom";
+import { Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
 import Login from "./pages/Login"
 import Dashboard from "./pages/Dashboard";
 import Uploads from "./pages/Uploads";
@@ -18,11 +18,15 @@ function Protected({ children, role }: { children: ReactNode; role?: "Admin" | "
 
 export default function App() {
   const { isAuthenticated, logout, profile } = useAuthStore();
+  const location = useLocation();
+
+  // LogProtocolos necesita full width sin padding
+  const isFullWidthPage = location.pathname === "/log-protocolos";
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <header className="bg-white border-b">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
+        <div className={`${isFullWidthPage ? 'w-full px-6' : 'max-w-6xl mx-auto px-4'} py-3 flex items-center gap-4`}>
           <Link to="/" className="font-semibold">QualityApp</Link>
           {isAuthenticated() && (
             <>
@@ -41,7 +45,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      <main className={isFullWidthPage ? "" : "max-w-6xl mx-auto px-4 py-6"}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/" element={

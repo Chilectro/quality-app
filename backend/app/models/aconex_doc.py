@@ -20,6 +20,10 @@ class AconexDoc(Base):
     revision        = Column(String(30))
     transmitted     = Column(String(60))
 
+    # 🔥 NUEVAS COLUMNAS (GENERATED en la BD, solo lectura)
+    document_no_norm     = Column(String(120))
+    subsystem_code_norm  = Column(String(60))
+
     load = relationship("Load", backref="aconex_rows")
 
 Index("ix_aconex_core", AconexDoc.subsystem_code, AconexDoc.function, AconexDoc.discipline)

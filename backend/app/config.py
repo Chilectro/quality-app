@@ -1,6 +1,8 @@
-from pydantic_settings import BaseSettings
 from functools import lru_cache
 from typing import Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     # --- DB ---
@@ -19,12 +21,12 @@ class Settings(BaseSettings):
     API_AUDIENCE: str = "quality.api"
     API_ISSUER: str = "quality.local"
 
-    # Azure (opcional, para si vuelves a usarlo)
+    # Azure (opcional)
     TENANT_ID: Optional[str] = None
     CLIENT_ID: Optional[str] = None
     JWKS_CACHE_SECONDS: int = 3600
 
-    # Roles permitidos (por si necesitas validar listas)
+    # Roles permitidos
     ALLOWED_ROLES: str = "Admin,User"
 
     # Cookies / tiempos tokens
@@ -33,21 +35,26 @@ class Settings(BaseSettings):
     COOKIE_DOMAIN: str = "127.0.0.1"
     COOKIE_SECURE: bool = False
     COOKIE_SAMESITE: str = "lax"
-    COOKIE_PATH: str = "/auth"   # <— NUEVO (default dev)
+    COOKIE_PATH: str = "/auth"
 
     # Bootstrap del primer admin
     BOOTSTRAP_TOKEN: Optional[str] = None
 
-    class Config:
-        env_file = ".env"
+    # 🔧 Configuración para pydantic-settings v2
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @property
-    def database_url(self):
+    def database_url(self) -> str:
         return (
             f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?charset=utf8mb4"
         )
 
+
 @lru_cache
-def get_settings():
+def get_settings() -> Settings:
     return Settings()

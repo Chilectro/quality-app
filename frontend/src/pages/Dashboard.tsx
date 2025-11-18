@@ -9,9 +9,9 @@ type Cards = {
   universo: number;
   abiertos: number;
   cerrados: number;
-  aconex_cargados: number;   // total cargados (filas crudas del log)
-  aconex_validos?: number;   // con match
-  aconex_invalidos?: number; // sin match
+  aconex_cargados: number;
+  aconex_validos?: number;
+  aconex_invalidos?: number;
   aconex_error_ss?: number;
 };
 
@@ -41,13 +41,11 @@ type SubRow = {
   pendiente_aconex: number;
 };
 
-// Duplicados Aconex (por Document No normalizado)
 type DupRow = {
   document_no: string;
-  count: number; // repeticiones del mismo document_no (normalizado)
+  count: number;
 };
 
-// Resumen de cambios (última vs anterior)
 type ChangesSummary = {
   has_previous: boolean;
   new_loaded_at?: string | null;
@@ -57,6 +55,69 @@ type ChangesSummary = {
 
 const fmt = (n: number | null | undefined) => (n ?? 0).toLocaleString("es-CL");
 
+// Componente de Progress Bar
+function ProgressBar({ value, max, color = "blue" }: { value: number; max: number; color?: string }) {
+  const percentage = max > 0 ? Math.round((value / max) * 100) : 0;
+
+  const colorClasses = {
+    blue: "bg-blue-400",
+    green: "bg-green-400",
+    red: "bg-red-400",
+    yellow: "bg-yellow-400",
+    purple: "bg-purple-400",
+  }[color] || "bg-blue-400";
+
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between text-xs text-gray-600">
+        <span>{fmt(value)}</span>
+        <span>{percentage}%</span>
+      </div>
+      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+        <div
+          className={`h-full ${colorClasses} transition-all duration-500 ease-out`}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Componente de Card Premium
+function MetricCard({
+  title,
+  value,
+  icon,
+  gradient,
+  subtitle,
+  progressBar,
+}: {
+  title: string;
+  value: string | number;
+  icon: string;
+  gradient: string;
+  subtitle?: string;
+  progressBar?: { value: number; max: number; color: string };
+}) {
+  return (
+    <div className={`rounded-2xl p-6 text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 ${gradient}`}>
+      <div className="flex items-start justify-between mb-3">
+        <div className="text-3xl">{icon}</div>
+        <div className="text-right">
+          <div className="text-3xl font-bold">{value}</div>
+          <div className="text-sm opacity-90">{title}</div>
+        </div>
+      </div>
+      {subtitle && <div className="text-xs opacity-80 mt-2">{subtitle}</div>}
+      {progressBar && (
+        <div className="mt-4">
+          <ProgressBar {...progressBar} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Table({
   columns,
   rows,
@@ -65,12 +126,12 @@ function Table({
   rows: any[];
 }) {
   return (
-    <div className="overflow-auto rounded-2xl border bg-white">
+    <div className="overflow-auto rounded-2xl border bg-white shadow-sm">
       <table className="min-w-full text-sm">
-        <thead className="bg-gray-50 sticky top-0 z-10">
+        <thead className="bg-gradient-to-r from-gray-50 to-gray-100 sticky top-0 z-10">
           <tr>
             {columns.map((c) => (
-              <th key={c.key} className={`text-left px-3 py-2 font-medium text-gray-600 ${c.className ?? ""}`}>
+              <th key={c.key} className={`text-left px-4 py-3 font-semibold text-gray-700 ${c.className ?? ""}`}>
                 {c.label}
               </th>
             ))}
@@ -79,15 +140,15 @@ function Table({
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td className="px-3 py-4 text-gray-500" colSpan={columns.length}>
+              <td className="px-4 py-8 text-gray-500 text-center" colSpan={columns.length}>
                 Sin datos
               </td>
             </tr>
           ) : (
             rows.map((r, i) => (
-              <tr key={i} className="odd:bg-white even:bg-gray-50">
+              <tr key={i} className="border-b border-gray-100 hover:bg-blue-50 transition-colors">
                 {columns.map((c) => (
-                  <td key={c.key} className={`px-3 py-2 ${c.className ?? ""}`}>
+                  <td key={c.key} className={`px-4 py-3 ${c.className ?? ""}`}>
                     {c.render ? c.render(r[c.key], r) : r[c.key]}
                   </td>
                 ))}
@@ -118,8 +179,8 @@ function ExportCSVButton<T>({ rows, filename }: { rows: T[]; filename: string })
   };
 
   return (
-    <button onClick={onExport} className="px-3 py-2 rounded-lg bg-gray-800 text-white text-sm hover:bg-black">
-      Exportar CSV
+    <button onClick={onExport} className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-400/90 to-blue-500/90 text-white text-sm hover:from-blue-500/90 hover:to-blue-600/90 shadow-md hover:shadow-lg transition-all">
+      📥 Exportar CSV
     </button>
   );
 }
@@ -136,6 +197,7 @@ export default function Dashboard() {
   const [dupRows, setDupRows] = useState<DupRow[]>([]);
   const [chg, setChg] = useState<ChangesSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showDownloads, setShowDownloads] = useState(false);
 
   const token = useAuthStore((s) => s.accessToken);
   const API_URL = import.meta.env.VITE_API_URL as string;
@@ -160,7 +222,6 @@ export default function Dashboard() {
     }
   };
 
-  // Descarga CSV de "Aconex sin match"
   const downloadUnmatchedCsv = async (strict = false) => {
     try {
       const url = `${API_URL}/aconex/unmatched.csv?strict=${strict ? "true" : "false"}`;
@@ -181,7 +242,6 @@ export default function Dashboard() {
     }
   };
 
-  // Descarga CSV de "Aconex duplicados"
   const downloadDuplicatesCsv = async (strict = false) => {
     try {
       const url = `${API_URL}/aconex/duplicates.csv?strict=${strict ? "true" : "false"}`;
@@ -202,7 +262,6 @@ export default function Dashboard() {
     }
   };
 
-  // Descarga CSV de "Cambios por subsistema" (último vs anterior)
   const downloadChangesCsv = async () => {
     try {
       const res = await fetch(`${API_URL}/metrics/subsistemas/changes.csv`, {
@@ -222,7 +281,6 @@ export default function Dashboard() {
     }
   };
 
-  // Carga inicial: tarjetas, disciplinas, grupos, duplicados, resumen de cambios
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -252,7 +310,6 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Lazy load de subsistemas por tab (incluye "general": trae lo que falte)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -270,7 +327,6 @@ export default function Dashboard() {
           if (alive) setSubsIE(rows);
         }
         if (tab === "general") {
-          // Trae lo que falte de los tres para poder agregar
           const promises: Promise<void>[] = [];
           if (!subsObra) {
             promises.push(apiGet<SubRow[]>("/metrics/subsistemas?group=obra").then((rows) => { if (alive) setSubsObra(rows); }));
@@ -292,9 +348,8 @@ export default function Dashboard() {
     };
   }, [tab, subsObra, subsMec, subsIE]);
 
-  // Agregado "General": suma por subsistema las métricas de obra + mecánico + I&E
   const aggregatedGeneral = useMemo<SubRow[]>(() => {
-    const sources: SubRow[][] = [subsMec ?? [], subsIE ?? []];
+    const sources: SubRow[][] = [subsObra ?? [], subsMec ?? [], subsIE ?? []];
     const map = new Map<string, SubRow>();
     for (const arr of sources) {
       for (const r of arr) {
@@ -326,11 +381,9 @@ export default function Dashboard() {
     if (tab === "obra") return subsObra ?? [];
     if (tab === "mecanico") return subsMec ?? [];
     if (tab === "ie") return subsIE ?? [];
-    // general
     return aggregatedGeneral;
   }, [tab, subsObra, subsMec, subsIE, aggregatedGeneral]);
 
-  // Ordenar por 'subsistema' (alfanumérico)
   const orderedSubs = useMemo(() => {
     const arr = [...currentSubs];
     arr.sort((a, b) =>
@@ -342,7 +395,6 @@ export default function Dashboard() {
     return arr;
   }, [currentSubs]);
 
-  // Métricas de duplicados (mini-cards)
   const { doc_keys_con_duplicados, duplicados_extras } = useMemo(() => {
     const rows = dupRows || [];
     let keys = 0;
@@ -357,197 +409,299 @@ export default function Dashboard() {
     return { doc_keys_con_duplicados: keys, duplicados_extras: extras };
   }, [dupRows]);
 
+  const universo = cards?.universo || 0;
+  const abiertos = cards?.abiertos || 0;
+  const cerrados = cards?.cerrados || 0;
+  const porcentajeCerrado = universo > 0 ? Math.round((cerrados / universo) * 100) : 0;
+  const porcentajeAbierto = universo > 0 ? Math.round((abiertos / universo) * 100) : 0;
+
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="text-xl font-semibold">Dashboard</div>
-        <div className="flex items-center gap-2">
-          {/* No-match */}
-          <button
-            onClick={() => downloadUnmatchedCsv(false)}
-            className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
-            title="Descargar Aconex sin match (normalizado)"
-          >
-            Descargar no-match (CSV)
-          </button>
-          <button
-            onClick={() => downloadUnmatchedCsv(true)}
-            className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
-            title="Descargar Aconex sin match (estricto, sin normalización)"
-          >
-            No-match estricto (CSV)
-          </button>
-
-          {/* Duplicados */}
-          <button
-            onClick={() => downloadDuplicatesCsv(false)}
-            className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
-            title="Descargar Aconex duplicados (normalizado)"
-          >
-            Duplicados (CSV)
-          </button>
-          <button
-            onClick={() => downloadDuplicatesCsv(true)}
-            className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
-            title="Descargar Aconex duplicados (estricto, sin normalización)"
-          >
-            Duplicados estrictos (CSV)
-          </button>
-        </div>
-      </div>
-
-      {/* Banner de cambios detectados (última vs anterior) */}
-      {chg?.has_previous && (chg.changed_count ?? 0) > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-          <div>
-            <strong>{chg.changed_count}</strong> subsistema(s) con cambios desde la última carga.
-            {chg.prev_loaded_at && chg.new_loaded_at && (
-              <span className="ml-2">
-                ({new Date(chg.prev_loaded_at).toLocaleString()} → {new Date(chg.new_loaded_at).toLocaleString()})
-              </span>
-            )}
-          </div>
-          <button
-            onClick={downloadChangesCsv}
-            className="px-2 py-1 rounded-md border bg-white hover:bg-gray-50"
-            title="Descargar detalle de cambios"
-          >
-            Descargar cambios (CSV)
-          </button>
-        </div>
-      )}
-
-      {error ? (
-        <div className="p-3 rounded-lg bg-red-50 text-red-700 border border-red-200">{error}</div>
-      ) : null}
-
-      {/* Tarjetas de totales */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-        <StatCard title="Universo Protocolos" value={fmt(cards?.universo)} />
-        <StatCard title="Abiertos" value={fmt(cards?.abiertos)} />
-        <StatCard title="Cerrados" value={fmt(cards?.cerrados)} />
-        <StatCard title="Cargado Aconex (total)" value={fmt(cards?.aconex_cargados)} />
-        <StatCard title="Aconex válidos (match)" value={fmt(cards?.aconex_validos)} />
-        <StatCard title="Aconex inválidos (sin match)" value={fmt(cards?.aconex_invalidos)} />
-      </div>
-
-      {/* Análisis Aconex — Duplicados */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-medium">Análisis Aconex — Duplicados</h3>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
-          <StatCard title="Claves con duplicados (Doc No)" value={fmt(doc_keys_con_duplicados)} />
-          <StatCard title="Registros extra por duplicados" value={fmt(duplicados_extras)} />
-        </div>
-      </section>
-
-      {/* Análisis Aconex — Errores de SS */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-medium">Análisis Aconex — Errores de SS</h3>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
-          <StatCard title="Protocolos con Error de SS" value={fmt(cards?.aconex_error_ss)} />
-          <div className="rounded-2xl border bg-white p-4 flex items-center justify-between">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Hero Section */}
+      <div className="bg-gradient-to-r from-blue-400/90 via-blue-500/90 to-indigo-500/90 text-white px-6 py-8 shadow-lg">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-center justify-between mb-6">
             <div>
-              <div className="text-sm text-gray-500">Descargar</div>
-              <div className="text-base font-medium">Lista de errores de SS</div>
+              <h1 className="text-3xl font-bold mb-2">Dashboard de Calidad</h1>
+              <p className="text-blue-100">Monitoreo en tiempo real de protocolos APSA y Aconex</p>
             </div>
-            <button
-              onClick={downloadSSErrorsCsv}
-              className="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
-            >
-              Descargar (CSV)
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowDownloads(!showDownloads)}
+                className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg backdrop-blur-sm transition-all flex items-center gap-2"
+              >
+                📦 Descargas
+                <span className="text-xs">{showDownloads ? "▲" : "▼"}</span>
+              </button>
+
+              {showDownloads && (
+                <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl p-3 z-10 text-gray-700 text-sm">
+                  <div className="space-y-2">
+                    <button onClick={() => downloadUnmatchedCsv(false)} className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded">
+                      📄 No-match (CSV)
+                    </button>
+                    <button onClick={() => downloadUnmatchedCsv(true)} className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded">
+                      📄 No-match estricto
+                    </button>
+                    <button onClick={() => downloadDuplicatesCsv(false)} className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded">
+                      📄 Duplicados (CSV)
+                    </button>
+                    <button onClick={() => downloadDuplicatesCsv(true)} className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded">
+                      📄 Duplicados estrictos
+                    </button>
+                    <button onClick={downloadSSErrorsCsv} className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded">
+                      📄 Errores de SS
+                    </button>
+                    {chg?.has_previous && (
+                      <button onClick={downloadChangesCsv} className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded">
+                        📄 Cambios entre cargas
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </section>
+      </div>
 
-      {/* Disciplinas */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-medium">Por disciplina</h3>
-          <ExportCSVButton rows={discRows} filename="disciplinas.csv" />
-        </div>
-        <Table
-          columns={[
-            { key: "disciplina", label: "Disciplina", className: "w-28" },
-            { key: "universo", label: "Universo", render: (v) => fmt(v) },
-            { key: "abiertos", label: "Abiertos", render: (v) => fmt(v) },
-            { key: "cerrados", label: "Cerrados", render: (v) => fmt(v) },
-            { key: "aconex", label: "Aconex", render: (v) => fmt(v) },
-          ]}
-          rows={discRows}
-        />
-      </section>
-
-      {/* Grupos */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-medium">Por grupo</h3>
-          <ExportCSVButton rows={grpRows} filename="grupos.csv" />
-        </div>
-        <Table
-          columns={[
-            { key: "grupo", label: "Grupo" },
-            { key: "universo", label: "Universo", render: (v) => fmt(v) },
-            { key: "abiertos", label: "Abiertos", render: (v) => fmt(v) },
-            { key: "cerrados", label: "Cerrados", render: (v) => fmt(v) },
-            { key: "aconex", label: "Aconex", render: (v) => fmt(v) },
-          ]}
-          rows={grpRows}
-        />
-      </section>
-
-      {/* Subsistemas con tabs (orden alfabético) */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex gap-2">
-            <button
-              className={`px-3 py-2 rounded-lg border ${tab === "obra" ? "bg-black text-white" : "bg-white"}`}
-              onClick={() => setTab("obra")}
-            >
-              Obra civil
-            </button>
-            <button
-              className={`px-3 py-2 rounded-lg border ${tab === "mecanico" ? "bg-black text-white" : "bg-white"}`}
-              onClick={() => setTab("mecanico")}
-            >
-              Mecánico Pipping
-            </button>
-            <button
-              className={`px-3 py-2 rounded-lg border ${tab === "ie" ? "bg-black text-white" : "bg-white"}`}
-              onClick={() => setTab("ie")}
-            >
-              I&amp;E
-            </button>
-            <button
-              className={`px-3 py-2 rounded-lg border ${tab === "general" ? "bg-black text-white" : "bg-white"}`}
-              onClick={() => setTab("general")}
-              title="Suma Obra + Mecánico + I&E por subsistema"
-            >
-              General
-            </button>
+      <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+        {/* Banner de cambios */}
+        {chg?.has_previous && (chg.changed_count ?? 0) > 0 && (
+          <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-2xl">⚠️</div>
+                <div>
+                  <div className="font-semibold text-amber-900">
+                    {chg.changed_count} subsistema(s) con cambios detectados
+                  </div>
+                  {chg.prev_loaded_at && chg.new_loaded_at && (
+                    <div className="text-xs text-amber-700 mt-1">
+                      {new Date(chg.prev_loaded_at).toLocaleString()} → {new Date(chg.new_loaded_at).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={downloadChangesCsv}
+                className="px-3 py-2 bg-amber-400/90 hover:bg-amber-500/90 text-white rounded-lg text-sm transition-colors"
+              >
+                Descargar cambios
+              </button>
+            </div>
           </div>
-          <ExportCSVButton rows={orderedSubs} filename={`subsistemas_${tab}.csv`} />
-        </div>
+        )}
 
-        <Table
-          columns={[
-            { key: "subsistema", label: "Subsistema", className: "w-52" },
-            { key: "universo", label: "Universo", render: (v) => fmt(v) },
-            { key: "abiertos", label: "Abiertos", render: (v) => fmt(v) },
-            { key: "cerrados", label: "Cerrados", render: (v) => fmt(v) },
-            { key: "pendiente_cierre", label: "Pend. Cierre", render: (v) => fmt(v) },
-            { key: "cargado_aconex", label: "Carg. Aconex", render: (v) => fmt(v) },
-            { key: "pendiente_aconex", label: "Pend. Aconex", render: (v) => fmt(v) },
-          ]}
-          rows={orderedSubs}
-        />
-      </section>
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 shadow-sm">
+            {error}
+          </div>
+        )}
 
-      {loading ? <div className="text-sm text-gray-500">Cargando métricas…</div> : null}
+        {/* Métricas Principales - Hero Cards */}
+        <section>
+          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <span className="text-2xl">📊</span>
+            Métricas Principales
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <MetricCard
+              title="Total Protocolos"
+              value={fmt(universo)}
+              icon="📋"
+              gradient="bg-gradient-to-br from-blue-300/80 to-blue-400/80"
+              subtitle="Universo completo de protocolos"
+            />
+            <MetricCard
+              title="Protocolos Cerrados"
+              value={fmt(cerrados)}
+              icon="✅"
+              gradient="bg-gradient-to-br from-green-300/80 to-green-400/80"
+              subtitle={`${porcentajeCerrado}% del total`}
+              progressBar={{ value: cerrados, max: universo, color: "green" }}
+            />
+            <MetricCard
+              title="Protocolos Abiertos"
+              value={fmt(abiertos)}
+              icon="⚠️"
+              gradient="bg-gradient-to-br from-red-300/80 to-red-400/80"
+              subtitle={`${porcentajeAbierto}% del total`}
+              progressBar={{ value: abiertos, max: universo, color: "red" }}
+            />
+          </div>
+        </section>
+
+        {/* Métricas Aconex */}
+        <section>
+          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <span className="text-2xl">🔗</span>
+            Análisis Aconex
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricCard
+              title="Total Cargado"
+              value={fmt(cards?.aconex_cargados)}
+              icon="📥"
+              gradient="bg-gradient-to-br from-indigo-300/80 to-indigo-400/80"
+            />
+            <MetricCard
+              title="Válidos (match)"
+              value={fmt(cards?.aconex_validos)}
+              icon="✓"
+              gradient="bg-gradient-to-br from-emerald-300/80 to-emerald-400/80"
+            />
+            <MetricCard
+              title="Inválidos (sin match)"
+              value={fmt(cards?.aconex_invalidos)}
+              icon="✗"
+              gradient="bg-gradient-to-br from-orange-300/80 to-orange-400/80"
+            />
+            <MetricCard
+              title="Error de SS"
+              value={fmt(cards?.aconex_error_ss)}
+              icon="⚡"
+              gradient="bg-gradient-to-br from-purple-300/80 to-purple-400/80"
+            />
+          </div>
+        </section>
+
+        {/* Duplicados */}
+        <section>
+          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <span className="text-2xl">🔄</span>
+            Duplicados en Aconex
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <MetricCard
+              title="Claves duplicadas"
+              value={fmt(doc_keys_con_duplicados)}
+              icon="🔑"
+              gradient="bg-gradient-to-br from-pink-300/80 to-rose-400/80"
+              subtitle="Documentos con el mismo número"
+            />
+            <MetricCard
+              title="Registros extras"
+              value={fmt(duplicados_extras)}
+              icon="📑"
+              gradient="bg-gradient-to-br from-fuchsia-300/80 to-fuchsia-400/80"
+              subtitle="Filas duplicadas a revisar"
+            />
+          </div>
+        </section>
+
+        {/* Grupos */}
+        <section>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+              <span className="text-2xl">👥</span>
+              Por Grupo
+            </h2>
+            <ExportCSVButton rows={grpRows} filename="grupos.csv" />
+          </div>
+          <Table
+            columns={[
+              { key: "grupo", label: "Grupo", className: "font-semibold" },
+              { key: "universo", label: "Universo", render: (v) => <span className="font-mono">{fmt(v)}</span> },
+              { key: "abiertos", label: "Abiertos", render: (v) => <span className="text-red-600 font-semibold">{fmt(v)}</span> },
+              { key: "cerrados", label: "Cerrados", render: (v) => <span className="text-green-600 font-semibold">{fmt(v)}</span> },
+              { key: "aconex", label: "Aconex", render: (v) => <span className="font-mono">{fmt(v)}</span> },
+            ]}
+            rows={grpRows}
+          />
+        </section>
+
+        {/* Disciplinas */}
+        <section>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+              <span className="text-2xl">🎯</span>
+              Por Disciplina
+            </h2>
+            <ExportCSVButton rows={discRows} filename="disciplinas.csv" />
+          </div>
+          <Table
+            columns={[
+              { key: "disciplina", label: "Disciplina", className: "w-28 font-mono font-semibold" },
+              { key: "universo", label: "Universo", render: (v) => <span className="font-mono">{fmt(v)}</span> },
+              { key: "abiertos", label: "Abiertos", render: (v) => <span className="text-red-600 font-semibold">{fmt(v)}</span> },
+              { key: "cerrados", label: "Cerrados", render: (v) => <span className="text-green-600 font-semibold">{fmt(v)}</span> },
+              { key: "aconex", label: "Aconex", render: (v) => <span className="font-mono">{fmt(v)}</span> },
+            ]}
+            rows={discRows}
+          />
+        </section>
+
+        {/* Subsistemas con tabs */}
+        <section>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex gap-2">
+              <button
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  tab === "obra"
+                    ? "bg-gradient-to-r from-blue-400/90 to-blue-500/90 text-white shadow-md"
+                    : "bg-white text-gray-700 hover:bg-gray-50 border"
+                }`}
+                onClick={() => setTab("obra")}
+              >
+                🏗️ Obra civil
+              </button>
+              <button
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  tab === "mecanico"
+                    ? "bg-gradient-to-r from-blue-400/90 to-blue-500/90 text-white shadow-md"
+                    : "bg-white text-gray-700 hover:bg-gray-50 border"
+                }`}
+                onClick={() => setTab("mecanico")}
+              >
+                ⚙️ Mecánico Pipping
+              </button>
+              <button
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  tab === "ie"
+                    ? "bg-gradient-to-r from-blue-400/90 to-blue-500/90 text-white shadow-md"
+                    : "bg-white text-gray-700 hover:bg-gray-50 border"
+                }`}
+                onClick={() => setTab("ie")}
+              >
+                ⚡ I&amp;E
+              </button>
+              <button
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  tab === "general"
+                    ? "bg-gradient-to-r from-blue-400/90 to-blue-500/90 text-white shadow-md"
+                    : "bg-white text-gray-700 hover:bg-gray-50 border"
+                }`}
+                onClick={() => setTab("general")}
+                title="Suma Obra + Mecánico + I&E por subsistema"
+              >
+                📊 General
+              </button>
+            </div>
+            <ExportCSVButton rows={orderedSubs} filename={`subsistemas_${tab}.csv`} />
+          </div>
+
+          <Table
+            columns={[
+              { key: "subsistema", label: "Subsistema", className: "w-52 font-semibold" },
+              { key: "universo", label: "Universo", render: (v) => <span className="font-mono">{fmt(v)}</span> },
+              { key: "abiertos", label: "Abiertos", render: (v) => <span className="text-red-600 font-semibold">{fmt(v)}</span> },
+              { key: "cerrados", label: "Cerrados", render: (v) => <span className="text-green-600 font-semibold">{fmt(v)}</span> },
+              { key: "pendiente_cierre", label: "Pend. Cierre", render: (v) => <span className="text-orange-600">{fmt(v)}</span> },
+              { key: "cargado_aconex", label: "Carg. Aconex", render: (v) => <span className="text-blue-600">{fmt(v)}</span> },
+              { key: "pendiente_aconex", label: "Pend. Aconex", render: (v) => <span className="text-purple-600 font-semibold">{fmt(v)}</span> },
+            ]}
+            rows={orderedSubs}
+          />
+        </section>
+
+        {loading && (
+          <div className="text-center py-12">
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+            <p className="mt-4 text-gray-600">Cargando métricas...</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
