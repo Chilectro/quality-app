@@ -22,3 +22,5 @@ alembic==1.13.2
 cachetools==5.3.3
 requests==2.32.3
 argon2-cffi==23.1.0
+
+cryptography
