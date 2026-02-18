@@ -57,6 +57,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('load_id', sa.Integer(), nullable=False),
     sa.Column('codigo_cmdic', sa.String(length=120), nullable=True),
+    sa.Column('tipo', sa.Text(), nullable=True),
     sa.Column('descripcion', sa.Text(), nullable=True),
     sa.Column('tag', sa.String(length=120), nullable=True),
     sa.Column('subsistema', sa.String(length=60), nullable=True),
