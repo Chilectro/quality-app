@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, and_, or_, case, literal, false, text
+from sqlalchemy import select, func, and_, or_, case, literal, false, text, insert
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from .auth import verify_token, require_roles
@@ -688,14 +688,7 @@ def upload_apsa(
         return {"ok": True, "rows_inserted": 0, "sheet": sheet, "header_row": int(header_row)}
 
     try:
-        # Insertar en chunks de 5000 para mejor performance
-        chunk_size = 5000
-        for i in range(0, len(records), chunk_size):
-            chunk = records[i:i + chunk_size]
-            db.bulk_insert_mappings(ApsaProtocol, chunk)
-            if (i + chunk_size) % 10000 == 0:
-                logger.info(f"  Insertados {min(i + chunk_size, len(records))}/{len(records)} registros...")
-
+        db.execute(insert(ApsaProtocol), records)
         db.commit()
         logger.info(f"✅ {len(records)} registros de APSA insertados exitosamente")
     except DataError as e:
@@ -801,14 +794,7 @@ def upload_aconex(
 
     if records:
         try:
-            # Insertar en chunks de 5000 para mejor performance
-            chunk_size = 5000
-            for i in range(0, len(records), chunk_size):
-                chunk = records[i:i + chunk_size]
-                db.bulk_insert_mappings(AconexDoc, chunk)
-                if (i + chunk_size) % 10000 == 0:
-                    logger.info(f"  Insertados {min(i + chunk_size, len(records))}/{len(records)} registros...")
-
+            db.execute(insert(AconexDoc), records)
             db.commit()
             logger.info(f"✅ {len(records)} registros de ACONEX insertados exitosamente")
         except Exception as e:
