@@ -8,7 +8,7 @@ engine = create_engine(
     pool_pre_ping=True,
     echo=False,
     future=True,
-    connect_args={"prepare_threshold": 0},  # requerido para PgBouncer transaction mode
+    connect_args={"prepare_threshold": None},  # deshabilita prepared statements (requerido para PgBouncer transaction mode)
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
