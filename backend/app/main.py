@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, and_, or_, case, literal, false, text, insert
+from sqlalchemy import select, func, and_, or_, case, literal, false, text, insert, distinct
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from .auth import verify_token, require_roles
@@ -1856,7 +1856,7 @@ def export_aconex_ss_errors(
 
     # Subconsulta: lista de subsistemas ACONEX para ese código que difieren del APSA
     aconex_ss_list = (
-        select(func.group_concat(func.distinct(AconexDoc.subsystem_code)))
+        select(func.string_agg(distinct(AconexDoc.subsystem_code), ','))
         .where(
             AconexDoc.load_id == aconex_id,
             N(AconexDoc.document_no) == N(ApsaProtocol.codigo_cmdic),
