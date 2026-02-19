@@ -680,7 +680,9 @@ def upload_apsa(
         return {"ok": True, "rows_inserted": 0, "sheet": sheet, "header_row": int(header_row)}
 
     try:
-        db.execute(insert(ApsaProtocol), records)
+        chunk_size = 500
+        for i in range(0, len(records), chunk_size):
+            db.execute(insert(ApsaProtocol).values(records[i:i + chunk_size]))
         db.commit()
         logger.info(f"✅ {len(records)} registros de APSA insertados exitosamente")
     except DataError as e:
@@ -786,7 +788,9 @@ def upload_aconex(
 
     if records:
         try:
-            db.execute(insert(AconexDoc), records)
+            chunk_size = 500
+            for i in range(0, len(records), chunk_size):
+                db.execute(insert(AconexDoc).values(records[i:i + chunk_size]))
             db.commit()
             logger.info(f"✅ {len(records)} registros de ACONEX insertados exitosamente")
         except Exception as e:
