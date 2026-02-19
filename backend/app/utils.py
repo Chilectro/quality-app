@@ -17,7 +17,7 @@ def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 def find_header_row_for_apsa(path: str, sheet: str, max_scan: int = 20) -> int:
     # Escaneamos primeras filas hasta encontrar fila con varias cabeceras clave
-    probe = pd.read_excel(path, sheet_name=sheet, header=None, nrows=max_scan)
+    probe = pd.read_excel(path, sheet_name=sheet, header=None, nrows=max_scan, engine='calamine')
     keys = {"N° CÓDIGO CMDIC","N° CODIGO CMDIC","DESCRIPCIÓN","DESCRIPCION","DESCRIPCIÓN DE ELEMENTOS","SUBSISTEMA","DISCIPLINA","STATUS BIM 360 FIELD"}
     for i in range(len(probe.index)):
         row_vals = [str(x).strip().upper() for x in list(probe.iloc[i].values)]

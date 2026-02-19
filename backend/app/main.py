@@ -587,13 +587,13 @@ def upload_apsa(
 
     # Elegir hoja
     try:
-        sheet = _pick_sheet(pd.ExcelFile(BytesIO(content)), "APSA")
+        sheet = _pick_sheet(pd.ExcelFile(BytesIO(content), engine='calamine'), "APSA")
     except Exception:
         sheet = "APSA"
 
     # Detectar fila de encabezados y leer
     header_row = find_header_row_for_apsa(BytesIO(content), sheet)
-    df = pd.read_excel(BytesIO(content), sheet_name=sheet, header=header_row)
+    df = pd.read_excel(BytesIO(content), sheet_name=sheet, header=header_row, engine='calamine')
 
     # Normalizar nombres de columnas
     df = normalize_cols(df)
@@ -664,18 +664,10 @@ def upload_apsa(
     mask_empty_disc = (df['disciplina'] == "") | (df['disciplina'] == "0")
     df.loc[mask_empty_disc, 'disciplina'] = df.loc[mask_empty_disc, 'subsistema'].apply(discipline_from_subsystem)
 
-    # Recortar tags al límite
-    clipped = 0
-    def clip_tag(val):
-        nonlocal clipped
-        if not val or val == '':
-            return None
-        if len(val) > tag_limit:
-            clipped += 1
-            return val[:tag_limit]
-        return val
-
-    df['tag'] = df['tag_raw'].apply(clip_tag)
+    # Recortar tags al límite (vectorizado)
+    tags = df['tag_raw'].replace('', None)
+    clipped = int((tags.str.len() > tag_limit).sum())
+    df['tag'] = tags.str[:tag_limit]
 
     # Crear lista de diccionarios para bulk insert
     records = df[['codigo_cmdic', 'tipo', 'descripcion', 'tag', 'subsistema', 'disciplina', 'status_bim360']].to_dict('records')
@@ -727,12 +719,12 @@ def upload_aconex(
 
     # Elegir hoja
     try:
-        sheet = _pick_sheet(pd.ExcelFile(BytesIO(content)), "Cargados ACONEX")
+        sheet = _pick_sheet(pd.ExcelFile(BytesIO(content), engine='calamine'), "Cargados ACONEX")
     except Exception:
         sheet = "Cargados ACONEX"
 
     # Leer y normalizar
-    df = pd.read_excel(BytesIO(content), sheet_name=sheet)
+    df = pd.read_excel(BytesIO(content), sheet_name=sheet, engine='calamine')
     df = normalize_cols(df)
 
     # Aliases de columnas
