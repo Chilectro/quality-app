@@ -587,13 +587,13 @@ def upload_apsa(
 
     # Elegir hoja
     try:
-        sheet = _pick_sheet(pd.ExcelFile(BytesIO(content), engine='calamine'), "APSA")
+        sheet = _pick_sheet(pd.ExcelFile(BytesIO(content), engine='openpyxl'), "APSA")
     except Exception:
         sheet = "APSA"
 
     # Detectar fila de encabezados y leer
     header_row = find_header_row_for_apsa(BytesIO(content), sheet)
-    df = pd.read_excel(BytesIO(content), sheet_name=sheet, header=header_row, engine='calamine')
+    df = pd.read_excel(BytesIO(content), sheet_name=sheet, header=header_row, engine='openpyxl')
 
     # Normalizar nombres de columnas
     df = normalize_cols(df)
@@ -719,12 +719,12 @@ def upload_aconex(
 
     # Elegir hoja
     try:
-        sheet = _pick_sheet(pd.ExcelFile(BytesIO(content), engine='calamine'), "Cargados ACONEX")
+        sheet = _pick_sheet(pd.ExcelFile(BytesIO(content), engine='openpyxl'), "Cargados ACONEX")
     except Exception:
         sheet = "Cargados ACONEX"
 
     # Leer y normalizar
-    df = pd.read_excel(BytesIO(content), sheet_name=sheet, engine='calamine')
+    df = pd.read_excel(BytesIO(content), sheet_name=sheet, engine='openpyxl')
     df = normalize_cols(df)
 
     # Aliases de columnas
