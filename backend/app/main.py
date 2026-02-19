@@ -15,6 +15,10 @@ app = FastAPI(title="Quality Backend", version="0.1.0")
 
 logger = logging.getLogger("perf")
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 @app.middleware("http")
 async def log_request_time(request: Request, call_next):
     start = perf_counter()
