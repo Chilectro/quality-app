@@ -905,59 +905,55 @@ def metrics_disciplinas(db: Session = Depends(get_db), decoded=Depends(verify_to
         return []
 
     disciplinas = [str(d) for d in range(50, 60)]
+
+    # Query 1: universo + abiertos + cerrados en una sola query con GROUP BY
+    with measure_query("GROUP BY disciplina: universo/abiertos/cerrados", "metrics_disciplinas"):
+        rows = db.execute(
+            select(
+                ApsaProtocol.disciplina,
+                func.count().label("universo"),
+                func.count(case((ApsaProtocol.status_bim360 == "ABIERTO", 1))).label("abiertos"),
+                func.count(case((ApsaProtocol.status_bim360 == "CERRADO", 1))).label("cerrados"),
+            )
+            .where(
+                ApsaProtocol.load_id == apsa_id,
+                ApsaProtocol.disciplina.in_(disciplinas)
+            )
+            .group_by(ApsaProtocol.disciplina)
+        ).fetchall()
+
+    stats = {r.disciplina: {"universo": r.universo, "abiertos": r.abiertos, "cerrados": r.cerrados} for r in rows}
+
+    # Query 2: aconex match por disciplina en una sola query con GROUP BY
+    aconex_by_disc = {}
+    if aconex_id:
+        with measure_query("GROUP BY disciplina: aconex match (EXISTS)", "metrics_disciplinas"):
+            aconex_rows = db.execute(
+                select(
+                    ApsaProtocol.disciplina,
+                    func.count(func.distinct(ApsaProtocol.codigo_cmdic)).label("aconex")
+                )
+                .where(
+                    ApsaProtocol.load_id == apsa_id,
+                    ApsaProtocol.disciplina.in_(disciplinas),
+                    select(1).where(
+                        AconexDoc.load_id == aconex_id,
+                        AconexDoc.document_no == ApsaProtocol.codigo_cmdic
+                    ).exists()
+                )
+                .group_by(ApsaProtocol.disciplina)
+            ).fetchall()
+        aconex_by_disc = {r.disciplina: r.aconex for r in aconex_rows}
+
     out = []
-
-    logger.warning("⚠️  /metrics/disciplinas ejecutará 40 queries (4 por cada disciplina) - problema N+1 conocido")
-
     for d in disciplinas:
-        with measure_query(f"Count universo disciplina {d}", "metrics_disciplinas"):
-            universo = db.execute(
-                select(func.count()).select_from(ApsaProtocol).where(
-                    ApsaProtocol.load_id == apsa_id,
-                    ApsaProtocol.disciplina == d
-                )
-            ).scalar() or 0
-
-        with measure_query(f"Count abiertos disciplina {d}", "metrics_disciplinas"):
-            abiertos = db.execute(
-                select(func.count()).select_from(ApsaProtocol).where(
-                    ApsaProtocol.load_id == apsa_id,
-                    ApsaProtocol.disciplina == d,
-                    ApsaProtocol.status_bim360 == "ABIERTO"
-                )
-            ).scalar() or 0
-
-        with measure_query(f"Count cerrados disciplina {d}", "metrics_disciplinas"):
-            cerrados = db.execute(
-                select(func.count()).select_from(ApsaProtocol).where(
-                    ApsaProtocol.load_id == apsa_id,
-                    ApsaProtocol.disciplina == d,
-                    ApsaProtocol.status_bim360 == "CERRADO"
-                )
-            ).scalar() or 0
-
-        # SOLO por coincidencia de código (document_no == codigo_cmdic)
-        aconex = 0
-        if aconex_id:
-            with measure_query(f"Count ACONEX match disciplina {d} (EXISTS)", "metrics_disciplinas"):
-                aconex = db.execute(
-                    select(func.count(func.distinct(ApsaProtocol.codigo_cmdic)))
-                    .where(
-                        ApsaProtocol.load_id == apsa_id,
-                        ApsaProtocol.disciplina == d,
-                        select(1).where(
-                            AconexDoc.load_id == aconex_id,
-                            AconexDoc.document_no == ApsaProtocol.codigo_cmdic
-                        ).exists()
-                    )
-                ).scalar() or 0
-
+        s = stats.get(d, {"universo": 0, "abiertos": 0, "cerrados": 0})
         out.append({
             "disciplina": d,
-            "universo": universo,
-            "abiertos": abiertos,
-            "cerrados": cerrados,
-            "aconex": aconex,
+            "universo": s["universo"],
+            "abiertos": s["abiertos"],
+            "cerrados": s["cerrados"],
+            "aconex": aconex_by_disc.get(d, 0),
         })
 
     return out
